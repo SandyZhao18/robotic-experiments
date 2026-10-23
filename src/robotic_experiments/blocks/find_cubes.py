@@ -28,6 +28,7 @@ from robotic_experiments.connection import connect
 DEFAULT_WORKSPACE = "config/workspace.toml"
 PHOTO_DIR = Path("runs/finds")
 MAX_ROTATION_DEG = 20.0  # parallel fingers square up a cube twisted this much as they close
+MIN_TOP_FRACTION = 0.6  # a detection whose top face is narrower than this x block size is a fragment
 
 
 @dataclass
@@ -69,6 +70,26 @@ def square_rotation(points_mm: np.ndarray) -> tuple[float, tuple[float, float]]:
     return (45.0 if angle == -45.0 else angle), (w, h)
 
 
+def edge_rotation(gray: np.ndarray, top_mask: np.ndarray, to_mat: np.ndarray) -> float:
+    """Rotation in (-45, 45] of a cube's top face vs the mat lines, from its edges in the image.
+
+    Brightness gradients along the top face's outline point across its four edges; folded modulo
+    90 degrees (angles x 4) they agree, so a magnitude-weighted circular mean is robust even when
+    the outline itself is ragged. `to_mat` (2x2) maps image directions to mat directions near the
+    cube, so the angle is measured against the files and ranks, not the image axes.
+    """
+    m = top_mask.astype(np.uint8)
+    band = cv2.dilate(m, np.ones((5, 5), np.uint8)) & (1 - cv2.erode(m, np.ones((5, 5), np.uint8)))
+    g = cv2.GaussianBlur(gray.astype(np.float32), (3, 3), 0)
+    gx, gy = cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1)
+    sel = band.astype(bool)
+    vecs = to_mat @ np.vstack([gx[sel], gy[sel]])  # gradient directions in mat coordinates
+    weight = np.hypot(*vecs)
+    theta = np.arctan2(vecs[1], vecs[0])
+    phi = math.degrees(math.atan2(np.sum(weight * np.sin(4 * theta)), np.sum(weight * np.cos(4 * theta)))) / 4
+    return 45.0 if phi == -45.0 else phi
+
+
 def locate(frame: Frame, ws: workspace.Workspace) -> list[Found]:
     """Mat coordinates and rotation of every block in the frame."""
     a1_view, fs, rs = fit_view(frame.world_lattice, ws)
@@ -78,15 +99,38 @@ def locate(frame: Frame, ws: workspace.Workspace) -> list[Found]:
     H, _ = cv2.findHomography(frame.corners_px.reshape(-1, 2).astype(np.float32),
                               mat_coords(frame.world_lattice, ws).astype(np.float32))
     sq = ws.square_size_mm
+    gray = cv2.cvtColor(frame.bgr, cv2.COLOR_BGR2GRAY)
     out = []
     for b in frame.blocks:
         f, r = to_mat @ (b.world[:2] - a1_view)
         contours, _ = cv2.findContours(b.top_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         outline = max(contours, key=cv2.contourArea).reshape(-1, 1, 2).astype(np.float32)
         on_mat = cv2.perspectiveTransform(outline, H).reshape(-1, 2) * sq
-        rot, size = square_rotation(on_mat)
+        _, size = square_rotation(on_mat)  # outline: only for the size sanity check
+        rot = edge_rotation(gray, b.top_mask, local_jacobian(H, b.top_px))
         out.append(Found(b.color, float(f), float(r), rot, size, b.top_px))
-    return sorted(out, key=lambda c: (round(c.r), round(c.f)))
+    return sorted(merge_fragments(out, ws), key=lambda c: (round(c.r), round(c.f)))
+
+
+def local_jacobian(H: np.ndarray, px: tuple[float, float]) -> np.ndarray:
+    """2x2 derivative of the pixel -> mat homography at a pixel (maps image directions to mat ones)."""
+    def apply(u, v):
+        x, y, w = H @ np.array([u, v, 1.0])
+        return np.array([x / w, y / w])
+    u, v = px
+    return np.column_stack([apply(u + 1, v) - apply(u - 1, v), apply(u, v + 1) - apply(u, v - 1)]) / 2
+
+
+def merge_fragments(found: list[Found], ws: workspace.Workspace) -> list[Found]:
+    """Drop detections that are not whole cubes: a top face much smaller than a cube (e.g. a
+    shaded side face picked up in another color), or one sitting on a bigger detection."""
+    min_side = MIN_TOP_FRACTION * ws.block_size_mm
+    whole = sorted((c for c in found if min(c.top_size_mm) >= min_side), key=lambda c: -c.top_size_mm[0] * c.top_size_mm[1])
+    kept: list[Found] = []
+    for c in whole:
+        if all(math.dist((c.f, c.r), (k.f, k.r)) * ws.square_size_mm >= ws.block_size_mm for k in kept):
+            kept.append(c)
+    return kept
 
 
 def annotate(frame: Frame, found: list[Found], ws: workspace.Workspace) -> np.ndarray:

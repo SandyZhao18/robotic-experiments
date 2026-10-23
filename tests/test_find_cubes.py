@@ -37,3 +37,32 @@ def test_usable_checks_supply_area_reach_and_twist():
     assert "twisted" in Found("red", 6.0, 1.0, 35.0, (30, 30), (0, 0)).usable(ws)
     assert "reach" in ok.usable(dataclasses.replace(ws, max_reach_mm=100.0))
     assert "off the mat" in Found("red", 8.6, 1.0, 0.0, (30, 30), (0, 0)).usable(ws)
+
+
+def test_fragments_of_one_cube_are_merged():
+    from robotic_experiments.blocks import workspace
+    from robotic_experiments.blocks.find_cubes import merge_fragments
+
+    ws = workspace.load("tests/workspace_fixture.toml")  # 40 mm blocks, 57 mm squares
+    cube = Found("yellow", 7.0, 2.0, 21.0, (40, 38), (0, 0))
+    side = Found("orange", 6.9, 2.3, 23.0, (11, 32), (0, 0))  # sliver: too narrow
+    shadow = Found("orange", 7.2, 2.1, 24.0, (30, 28), (0, 0))  # whole-sized but on top of the cube
+    other = Found("red", 5.0, 0.0, 0.0, (39, 40), (0, 0))
+    kept = merge_fragments([side, shadow, cube, other], ws)
+    assert sorted(kept, key=lambda c: c.color) == [other, cube]
+
+
+@pytest.mark.parametrize("angle", [0.0, 8.0, -15.0, 25.0, -40.0])
+def test_edge_rotation_from_a_drawn_square(angle):
+    import cv2
+
+    from robotic_experiments.blocks.find_cubes import edge_rotation
+
+    img = np.full((200, 200), 60, np.uint8)
+    box = cv2.boxPoints(((100.0, 100.0), (40.0, 40.0), angle)).astype(np.int32)
+    cv2.fillPoly(img, [box], 220)
+    mask = np.zeros_like(img)
+    cv2.fillPoly(mask, [box], 1)
+    # image y points down; mat ranks/files here are the image axes with y flipped
+    rot = edge_rotation(img, mask.astype(bool), np.array([[1.0, 0.0], [0.0, -1.0]]))
+    assert rot == pytest.approx((-angle + 45.0) % 90.0 - 45.0, abs=1.5)
