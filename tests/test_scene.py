@@ -46,3 +46,17 @@ def test_scene_file_roundtrip(tmp_path):
     assert scene.load(path) == rec
     scene.add(rec[0], path)
     assert len(scene.load(path)) == 3
+
+
+def test_obstacle_boxes_follow_the_blocks():
+    import dataclasses
+
+    from robotic_experiments.blocks import workspace
+
+    ws = dataclasses.replace(workspace.load("tests/workspace_fixture.toml"), theta_deg=-91.0)
+    rec = blocks([{"at": "a3"}, {"at": "a3"}, {"shape": "brick", "at": "b3|b4", "along": "ranks"}])
+    boxes = scene.obstacle_boxes(rec, ws)
+    assert boxes[1]["center"][2] == ws.mat_top_z + 45.0  # second cube: 30-60 mm above the mat
+    assert boxes[0]["center"][:2] == ws.xy_at(0.0, 2.0)
+    assert boxes[2]["size"] == (70.0, 40.0, 40.0)
+    assert boxes[2]["yaw_deg"] - boxes[0]["yaw_deg"] == 90.0

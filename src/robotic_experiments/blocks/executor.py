@@ -103,7 +103,19 @@ def parked_open(holding, ws) -> bool:
     return any(abs(pos - p) <= 2 * GRIPPER_POSITION_TOLERANCE + 5 for p in parked)
 
 
-async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: float, grip_timeout: float) -> None:
+def world_state(ws):
+    """Placed blocks from the scene record as obstacles for the motion planner."""
+    from viam.proto.common import Geometry, GeometriesInFrame, RectangularPrism, Vector3, WorldState
+
+    geoms = [Geometry(center=Pose(x=b["center"][0], y=b["center"][1], z=b["center"][2], o_z=1, theta=b["yaw_deg"]),
+                      box=RectangularPrism(dims_mm=Vector3(x=b["size"][0], y=b["size"][1], z=b["size"][2])),
+                      label=b["label"])
+             for b in scene.obstacle_boxes(scene.load(), ws)]
+    return WorldState(obstacles=[GeometriesInFrame(reference_frame=ws.frame, geometries=geoms)]) if geoms else None
+
+
+async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: float, grip_timeout: float,
+                   scene_obstacles: bool = False) -> None:
     gripper = Gripper.from_robot(machine, GRIPPER)
     if s.kind == "move":
         t = s.target
@@ -111,10 +123,15 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
         vertical = (prev is not None and math.dist((prev.x, prev.y), (t.x, t.y)) <= VERTICAL_XY_TOLERANCE_MM
                     and abs(prev.z - t.z) > 1.0 and abs((prev.theta - t.theta + 180) % 360 - 180) < 1.0)
         motion = MotionClient.from_robot(machine, MOTION)
+        # Placed blocks are obstacles for sideways moves. Vertical moves at a pickup or drop are
+        # covered by the planner's finger clearance check: the gripper's collision model is much
+        # wider than the real fingers and would refuse drops next to a stack that fit fine.
+        obstacles = world_state(ws) if scene_obstacles and not vertical else None
         ok = await bounded(
             motion.move(
                 component_name=GRIPPER,
                 destination=PoseInFrame(reference_frame=ws.frame, pose=target_pose(t)),
+                world_state=obstacles,
                 constraints=STRAIGHT_LINE if vertical else None,
                 timeout=move_timeout,
             ),
@@ -215,7 +232,7 @@ async def execute(p: Plan, ws, stop_after: int | None, move_timeout: float, grip
         try:
             for i, s in enumerate(p.steps[: last + 1]):
                 print(f"  {i:3d} {s.kind:7s} {s.label}", flush=True)
-                await run_step(machine, ws, s, prev, move_timeout, grip_timeout)
+                await run_step(machine, ws, s, prev, move_timeout, grip_timeout, p.structure is not None)
                 if s.record is not None:  # the block is confirmed let go: it is now part of the scene
                     scene.add(dataclasses.replace(s.record, placed_at=datetime.now().isoformat(timespec="seconds")))
                 prev = s.target or prev

@@ -6,6 +6,7 @@ blocks are obstacles when planning the next run.
 """
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +55,28 @@ def save(blocks: list[SceneBlock], path: Path = SCENE_PATH) -> None:
 
 def add(block: SceneBlock, path: Path = SCENE_PATH) -> None:
     save(load(path) + [block], path)
+
+
+OBSTACLE_MARGIN_MM = 5.0
+
+
+def obstacle_boxes(blocks: list[SceneBlock], ws) -> list[dict]:
+    """Each block as a box in `world` for the motion planner: center, size and yaw (x along its
+    long axis), grown by OBSTACLE_MARGIN_MM. Positions use the arm's corrected mapping, i.e. where
+    the arm put the block, so they line up with the arm's own coordinates."""
+    files_yaw = math.degrees(math.atan2(ws.file_unit[1], ws.file_unit[0]))
+    out = []
+    for b in blocks:
+        s = SHAPES[b.shape]
+        x, y = ws.xy_at(b.f, b.r)
+        out.append({
+            "label": f"{b.shape} {b.at or ''} L{b.level}".strip(),
+            "center": (x, y, ws.mat_top_z + (b.base_mm + b.top_mm) / 2),
+            "size": (s.length + 2 * OBSTACLE_MARGIN_MM, s.width + 2 * OBSTACLE_MARGIN_MM,
+                     (b.top_mm - b.base_mm) + 2 * OBSTACLE_MARGIN_MM),
+            "yaw_deg": files_yaw if b.along == "files" else files_yaw + 90.0,
+        })
+    return out
 
 
 def visible_tops(blocks: list[SceneBlock], square_mm: float) -> list[SceneBlock]:
