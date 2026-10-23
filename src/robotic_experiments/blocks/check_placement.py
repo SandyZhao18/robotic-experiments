@@ -63,13 +63,19 @@ def mat_coords(world_lattice: np.ndarray, ws: workspace.Workspace) -> np.ndarray
     return idx + 0.5
 
 
-def measure(world_lattice: np.ndarray, block_xy, ws: workspace.Workspace, square: str) -> Placement:
-    a1 = np.array(ws.a1)
+def fit_view(world_lattice: np.ndarray, ws: workspace.Workspace) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The mat as seen in this frame: a1's center, file step and rank step, in `world` x/y."""
     pts = world_lattice[..., :2].reshape(-1, 2)
     uv = mat_coords(world_lattice, ws)
-
     A = np.column_stack([np.ones(len(uv)), uv])
     (a1_view, fs, rs), *_ = np.linalg.lstsq(A, pts, rcond=None)
+    return a1_view, fs, rs
+
+
+def measure(world_lattice: np.ndarray, block_xy, ws: workspace.Workspace, square: str) -> Placement:
+    a1 = np.array(ws.a1)
+    uv = mat_coords(world_lattice, ws)
+    a1_view, fs, rs = fit_view(world_lattice, ws)
 
     f, r = workspace.parse_square(square)
     center = a1_view + f * fs + r * rs

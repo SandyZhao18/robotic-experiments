@@ -1,0 +1,119 @@
+"""Find every cube on the mat with the camera. Read-only: never moves the robot.
+
+    uv run find-cubes
+
+Each cube is located against the chessboard squares in the same photo (like check-placement),
+so errors in the camera's mounting offset cancel out. Positions are reported in mat
+coordinates: (f, r) with square (file F, rank R) centered at whole numbers, a1 = (0, 0). The
+cube's rotation relative to the mat lines comes from its top face. An annotated photo is saved
+to runs/finds/.
+"""
+
+import argparse
+import asyncio
+import math
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from robotic_experiments.blocks import workspace
+from robotic_experiments.blocks.check_placement import fit_view, mat_coords
+from robotic_experiments.blocks.locate_mat import Frame, LocateError, capture_frame
+from robotic_experiments.connection import connect
+
+DEFAULT_WORKSPACE = "config/workspace.toml"
+PHOTO_DIR = Path("runs/finds")
+
+
+@dataclass
+class Found:
+    color: str
+    f: float  # mat coordinates: square (F, R) is centered at (F, R); a1 = (0, 0)
+    r: float
+    rotation_deg: float  # top face vs the mat lines, in (-45, 45]
+    top_size_mm: tuple[float, float]  # top face sides, as a sanity check on the detection
+    top_px: tuple[float, float]
+
+    @property
+    def square(self) -> str | None:
+        F, R = round(self.f), round(self.r)
+        return workspace.square_name(F, R) if 0 <= F < 8 and 0 <= R < 8 else None
+
+    def offset_mm(self, square_mm: float) -> tuple[float, float]:
+        """mm from the nearest square's center, along (files, ranks)."""
+        return ((self.f - round(self.f)) * square_mm, (self.r - round(self.r)) * square_mm)
+
+
+def square_rotation(points_mm: np.ndarray) -> tuple[float, tuple[float, float]]:
+    """Rotation in (-45, 45] and side lengths of the rectangle best fitting a square's outline."""
+    (_, _), (w, h), angle = cv2.minAreaRect(points_mm.astype(np.float32))
+    angle = (angle + 45.0) % 90.0 - 45.0
+    return (45.0 if angle == -45.0 else angle), (w, h)
+
+
+def locate(frame: Frame, ws: workspace.Workspace) -> list[Found]:
+    """Mat coordinates and rotation of every block in the frame."""
+    a1_view, fs, rs = fit_view(frame.world_lattice, ws)
+    to_mat = np.linalg.inv(np.column_stack([fs, rs]))
+    # Pixel -> mat coordinates on the mat plane, for the top-face outline (a plane parallel to
+    # the mat maps by a similarity, so angles survive even though the face sits 30 mm higher).
+    H, _ = cv2.findHomography(frame.corners_px.reshape(-1, 2).astype(np.float32),
+                              mat_coords(frame.world_lattice, ws).astype(np.float32))
+    sq = ws.square_size_mm
+    out = []
+    for b in frame.blocks:
+        f, r = to_mat @ (b.world[:2] - a1_view)
+        contours, _ = cv2.findContours(b.top_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        outline = max(contours, key=cv2.contourArea).reshape(-1, 1, 2).astype(np.float32)
+        on_mat = cv2.perspectiveTransform(outline, H).reshape(-1, 2) * sq
+        rot, size = square_rotation(on_mat)
+        out.append(Found(b.color, float(f), float(r), rot, size, b.top_px))
+    return sorted(out, key=lambda c: (round(c.r), round(c.f)))
+
+
+def annotate(frame: Frame, found: list[Found], ws: workspace.Workspace) -> np.ndarray:
+    img = frame.bgr.copy()
+    for c in found:
+        u, v = int(c.top_px[0]), int(c.top_px[1])
+        cv2.drawMarker(img, (u, v), (255, 0, 255), cv2.MARKER_TILTED_CROSS, 20, 2)
+        df, dr = c.offset_mm(ws.square_size_mm)
+        text = f"{c.color} {c.square or '?'} {df:+.0f},{dr:+.0f} {c.rotation_deg:+.0f}deg"
+        cv2.putText(img, text, (u - 60, v - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 4)
+        cv2.putText(img, text, (u - 60, v - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    return img
+
+
+async def find(ws: workspace.Workspace) -> tuple[list[Found], np.ndarray]:
+    async with await connect() as machine:
+        frame = await capture_frame(machine)
+    found = locate(frame, ws)
+    return found, annotate(frame, found, ws)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
+    args = parser.parse_args()
+    ws = workspace.load(args.workspace)
+    try:
+        found, photo = asyncio.run(find(ws))
+    except LocateError as e:
+        raise SystemExit(f"Could not find cubes: {e}")
+
+    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+    path = PHOTO_DIR / f"find_{datetime.now():%Y-%m-%d_%H%M%S}_{len(found)}-cubes.jpg"
+    cv2.imwrite(str(path), photo)
+    print(f"{len(found)} cube(s) in view:")
+    print(f"  {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  top face mm")
+    for c in found:
+        df, dr = c.offset_mm(ws.square_size_mm)
+        w, h = c.top_size_mm
+        print(f"  {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  {w:.0f} x {h:.0f}")
+    print(f"Photo: {path}")
+
+
+if __name__ == "__main__":
+    main()

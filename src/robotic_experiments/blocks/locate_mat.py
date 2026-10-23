@@ -142,6 +142,13 @@ def find_block_top(bgr: np.ndarray, depth: np.ndarray, color: str = "red") -> tu
 
 def top_face(mask: np.ndarray, depth: np.ndarray) -> tuple[tuple[float, float], float]:
     """Pixel centroid and depth of the part of a block's blob nearest the camera."""
+    top, d = top_face_mask(mask, depth)
+    v, u = np.nonzero(top)
+    return (float(u.mean()), float(v.mean())), float(np.median(d[top]))
+
+
+def top_face_mask(mask: np.ndarray, depth: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Boolean mask of a block's top face (its pixels nearest the camera), and the masked depth."""
     mask = cv2.erode(mask.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)  # drop mixed edge pixels
     d = np.where(mask & (depth > 0), depth, np.nan)
     if np.isnan(d).all():
@@ -150,8 +157,7 @@ def top_face(mask: np.ndarray, depth: np.ndarray) -> tuple[tuple[float, float], 
     top = d <= nearest + TOP_FACE_TOLERANCE_MM
     if top.sum() < 100:
         raise LocateError("too few top-face pixels on the block")
-    v, u = np.nonzero(top)
-    return (float(u.mean()), float(v.mean())), float(np.median(d[top]))
+    return top, d
 
 
 def sample_depth(depth: np.ndarray, u: float, v: float) -> float:
@@ -325,9 +331,26 @@ class Capture:
     block_color: str
 
 
-async def capture(machine, color: str = "red", near: tuple[float, float] | None = None) -> Capture:
-    """Measure the mat and one block. color "any" accepts every known block color; with `near`
-    (world x, y) the block nearest that point is chosen, otherwise the largest blob."""
+@dataclass
+class Block:
+    color: str
+    top_px: tuple[float, float]  # top-face centroid in the image
+    top_mask: np.ndarray  # top-face pixels
+    world: np.ndarray  # (3,) top-face center in `world`
+
+
+@dataclass
+class Frame:
+    """One camera frame: the chessboard corners and every block in view, measured in `world`."""
+
+    bgr: np.ndarray
+    corners_px: np.ndarray  # (rows, cols, 2)
+    world_lattice: np.ndarray  # (rows, cols, 3)
+    blocks: list[Block]
+
+
+async def capture_frame(machine, colors=None) -> Frame:
+    """Measure the mat and every block of the given colors (default: all known colors)."""
     if await Arm.from_robot(machine, ARM).is_moving():
         raise LocateError("arm is moving; wait for it to stop")
     cam = Camera.from_robot(machine, CAMERA)
@@ -345,20 +368,36 @@ async def capture(machine, color: str = "red", near: tuple[float, float] | None 
     corners = find_corners(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
     rows, cols = corners.shape[:2]
     px = corners.reshape(-1, 2)
-    blobs = block_blobs(bgr, list(BLOCK_COLORS) if color == "any" else [color])
-    if not blobs:
-        raise LocateError(f"no {'' if color == 'any' else color + ' '}block found in view")
-    if near is None:
-        blobs = blobs[:1]
-    tops = [top_face(mask, depth) for _, mask in blobs]
-    block_cam = np.array([rays(np.array([p]), *intr)[0] * d for p, d in tops])
+    blobs = block_blobs(bgr, list(colors or BLOCK_COLORS))
+    tops = []
+    for color, mask in blobs:
+        try:
+            top, d = top_face_mask(mask, depth)
+        except LocateError:
+            continue  # e.g. a blob at the image edge with no depth
+        v, u = np.nonzero(top)
+        tops.append((color, (float(u.mean()), float(v.mean())), top, float(np.median(d[top]))))
+    block_cam = np.array([rays(np.array([p]), *intr)[0] * d for _, p, _, d in tops]).reshape(-1, 3)
 
     depths = np.array([sample_depth(depth, u, v) for u, v in px])
     on_plane = project_onto_plane(px, depths, intr)
     world = await to_world(machine, np.vstack([on_plane, block_cam]))
-    lattice, blocks = world[: len(px)].reshape(rows, cols, 3), world[len(px):]
-    i = 0 if near is None else int(np.argmin(np.linalg.norm(blocks[:, :2] - np.asarray(near), axis=1)))
-    return Capture(bgr, corners, lattice, tops[i][0], blocks[i], blobs[i][0])
+    lattice, blocks_w = world[: len(px)].reshape(rows, cols, 3), world[len(px):]
+    blocks = [Block(c, p, m, w) for (c, p, m, _), w in zip(tops, blocks_w)]
+    return Frame(bgr, corners, lattice, blocks)
+
+
+async def capture(machine, color: str = "red", near: tuple[float, float] | None = None) -> Capture:
+    """Measure the mat and one block. color "any" accepts every known block color; with `near`
+    (world x, y) the block nearest that point is chosen, otherwise the largest blob."""
+    f = await capture_frame(machine, None if color == "any" else [color])
+    if not f.blocks:
+        raise LocateError(f"no {'' if color == 'any' else color + ' '}block found in view")
+    if near is None:
+        b = max(f.blocks, key=lambda b: b.top_mask.sum())
+    else:
+        b = min(f.blocks, key=lambda b: np.linalg.norm(b.world[:2] - np.asarray(near)))
+    return Capture(f.bgr, f.corners_px, f.world_lattice, b.top_px, b.world, b.color)
 
 
 async def capture_and_fit(ws: workspace.Workspace) -> tuple[MatFit, DepthCheck, np.ndarray]:
