@@ -183,19 +183,26 @@ def _pickup_order(ws: Workspace, sources: list, loose: list[Loose], n: int, prob
 TRAVEL_CLEARANCE_MM = 20.0  # a carried block's bottom stays this far above everything on the mat
 
 
-def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[float, float]]]) -> Plan:
+def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[float, float]]],
+                   existing: list | None = None, start: int = 0, check_scene: bool = False) -> Plan:
     """Build a solved structure (structure.solve) block by block, block i coming from pickups[i]
-    (label, mat coordinates). Placed blocks and blocks still waiting are obstacles for the fingers
-    at every pickup and drop; travel height rises to clear the tallest of them."""
+    (label, mat coordinates). Blocks before `start` are already built; `existing` (scene blocks,
+    including those) are obstacles too. Placed blocks and blocks still waiting are obstacles for
+    the fingers at every pickup and drop; travel height rises to clear the tallest of them. With
+    `check_scene`, the run checks the scene with the camera right after reaching the safe start."""
     from robotic_experiments.blocks import scene
     from robotic_experiments.blocks.structure import Rect, held_mm  # pure; avoids an import cycle
 
+    existing = list(existing or [])
     problems = ws.mat_problems()
     if len(pickups) != len(placed):
         problems.append(f"{len(placed)} blocks but {len(pickups)} pickups")
+    if start >= len(placed):
+        problems.append("everything in the build file is already built")
     if problems:
         raise PlanError("; ".join(problems))
     sq = ws.square_size_mm
+    built_before = existing  # scene blocks: what is on the mat now
 
     def footprint_at(p, f, r):
         lu, lv = (p.shape.length, p.shape.width) if p.along == "files" else (p.shape.width, p.shape.length)
@@ -203,15 +210,25 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
         return Rect(u - lu / 2, v - lv / 2, u + lu / 2, v + lv / 2)
 
     for i, ((label, (f, r)), p) in enumerate(zip(pickups, placed)):
+        if i < start:
+            continue
         here = footprint_at(p, f, r)
-        if any(here.overlap(q.footprint(sq)) for q in placed):
-            problems.append(f"pickup {label} for block {i} lies inside the structure")
+        if any(here.overlap(q.footprint(sq)) for q in placed) or any(here.overlap(b.footprint(sq)) for b in built_before):
+            problems.append(f"pickup {label} for block {i} lies inside the structure or under a placed block")
+        # a new block must not collide with a placed block that is not part of this build
+        new_fp = p.footprint(sq)
+        for b in [b for b in built_before if not _is_build_block(b, placed[:start])]:
+            if new_fp.overlap(b.footprint(sq)) and b.top_mm > p.base_mm and b.base_mm < p.top_mm:
+                problems.append(f"block {i} ({p.shape.name} at {p.at}) would overlap a block already on the mat at {b.at or 'unknown'}")
 
     assignments = []
     for i, ((label, (pf, pr)), p) in enumerate(zip(pickups, placed)):
+        if i < start:
+            continue
         held = held_mm(p, ws.fingers_open_along_ranks)
         lift = ws.grip_lift_mm(p.shape.height)
-        built = [(q.at, q.footprint(sq), q.top_mm) for q in placed[:i]]
+        built = ([(b.at or "a placed block", b.footprint(sq), b.top_mm) for b in built_before]
+                 + [(q.at, q.footprint(sq), q.top_mm) for q in placed[start:i]])
         waiting = [(lab, footprint_at(q, f, r), q.shape.height) for (lab, (f, r)), q in zip(pickups[i + 1:], placed[i + 1:])]
 
         def clashes(f, r, gap, fingertip_mm, what, at_label):
@@ -237,7 +254,26 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
     if problems:
         raise PlanError("; ".join(problems))
     assignments = tuple(assignments)
-    return Plan(None, assignments, _pick_and_place_steps(ws, assignments), tuple(placed))
+    steps = list(_pick_and_place_steps(ws, assignments))
+    if check_scene:
+        steps.insert(1, Step("check_scene", "check the build area against the scene record"))
+    return Plan(None, assignments, tuple(steps), tuple(placed))
+
+
+def _is_build_block(b, built_part) -> bool:
+    """Is scene block b one of the build file's blocks that are already built?"""
+    return any(b.shape == q.shape.name and b.at == q.at and b.level == q.level for q in built_part)
+
+
+def already_built(placed: list, existing: list) -> int:
+    """How many leading blocks of the build file are already in the scene (same shape, place, level)."""
+    k = 0
+    for q in placed:
+        if any(b.shape == q.shape.name and b.at == q.at and b.level == q.level for b in existing):
+            k += 1
+        else:
+            break
+    return k
 
 
 MIN_TURN_DEG = 2.0  # smaller twists are grabbed at the usual wrist angle

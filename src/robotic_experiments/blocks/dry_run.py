@@ -80,7 +80,16 @@ def plan_build(path: str, ws: workspace.Workspace) -> Plan:
     if missing:
         raise ValueError(f"blocks {', '.join(missing)} have no `from`: say which square each block is picked up from")
     pickups = [(b["from"], structure.parse_at(b["from"])) for b in raw]
-    return plan_structure(ws, placed, pickups)
+    from robotic_experiments.blocks import scene
+    from robotic_experiments.blocks.planner import already_built
+
+    existing = scene.load()
+    start = already_built(placed, existing)
+    if start:
+        print(f"Resuming: the first {start} block(s) of {path} are already in the scene record.")
+    if existing and len(existing) > start:
+        print(f"{len(existing) - start} other block(s) in the scene record are obstacles.")
+    return plan_structure(ws, placed, pickups, existing, start, check_scene=True)
 
 
 def find_loose(ws: workspace.Workspace) -> list[Loose]:

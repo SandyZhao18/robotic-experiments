@@ -129,3 +129,43 @@ def test_travel_rises_over_tall_stacks():
     last_travel = max(s.target.z for s in p.steps if s.block == 3 and s.label.startswith("travel above"))
     lift = ws.grip_lift_mm(60.0)
     assert last_travel >= ws.mat_top_z + 90 + TRAVEL_CLEARANCE_MM + 5 + lift + ws.tcp_above_fingertips_mm - 1e-6
+
+
+def test_resume_skips_blocks_already_in_the_scene():
+    from robotic_experiments.blocks import scene
+    from robotic_experiments.blocks.planner import already_built, plan_structure
+
+    ws = _ws()
+    placed = solve([{"at": "a3"}, {"at": "a3"}, {"at": "a3"}], ws.square_size_mm)
+    existing = [scene.from_placed(p) for p in placed[:2]]
+    assert already_built(placed, existing) == 2
+    p = plan_structure(ws, placed, [("f1", (5.0, 0.0)), ("g1", (6.0, 0.0)), ("h1", (7.0, 0.0))], existing, start=2)
+    assert [a.block for a in p.assignments] == [2]
+    (low,) = [s.target.z for s in p.steps if s.label.startswith("lower block")]
+    assert low == pytest.approx(ws.grip_z + 60.0 + ws.place_release_offset_mm)
+
+
+def test_unrelated_scene_blocks_are_obstacles():
+    from robotic_experiments.blocks import scene
+    from robotic_experiments.blocks.planner import PlanError, plan_structure
+
+    ws = _ws()
+    stack = [scene.from_placed(p) for p in solve([{"at": "a4"}, {"at": "a4"}], ws.square_size_mm)]
+    placed = solve([{"at": "a3"}], ws.square_size_mm)
+    tight = __import__("dataclasses").replace(ws, finger_clearance_mm=10.0)
+    with pytest.raises(PlanError, match="would touch the block on a4"):
+        plan_structure(tight, placed, [("f1", (5.0, 0.0))], stack)
+    on_top = solve([{"at": "a4"}], ws.square_size_mm)  # not stacked by this build: overlaps the stack
+    with pytest.raises(PlanError, match="overlap a block already on the mat"):
+        plan_structure(ws, on_top, [("f1", (5.0, 0.0))], stack)
+
+
+def test_build_plans_check_the_scene_after_the_safe_start():
+    from robotic_experiments.blocks.planner import plan_structure
+
+    ws = _ws()
+    p = plan_structure(ws, solve([{"at": "a3"}], ws.square_size_mm), [("f1", (5.0, 0.0))], check_scene=True)
+    assert [s.kind for s in p.steps[:2]] == ["move", "check_scene"]
+    assert p.steps[0].label == "move to safe start"
+    (rec,) = [s.record for s in p.steps if s.record is not None]
+    assert rec.at == "a3" and rec.top_mm == 30.0

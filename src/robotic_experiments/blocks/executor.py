@@ -136,6 +136,20 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
             await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
         else:
             await bounded(open_partly(gripper, ws.open_position), grip_timeout + 5, s.label)
+    elif s.kind == "check_scene":
+        from robotic_experiments.blocks import check_scene  # camera stack; only needed for builds
+        from robotic_experiments.blocks.locate_mat import LocateError, capture_frame
+
+        try:
+            frame = await bounded(capture_frame(machine), 60, "camera capture")
+        except LocateError as e:
+            raise Abort(f"scene check: {e}")
+        report = check_scene.compare(scene.load(), check_scene.seen_in_build_area(frame, ws), ws.square_size_mm)
+        print(check_scene.describe(report, ws.square_size_mm), flush=True)
+        if not report.ok:
+            raise Abort("the build area does not match the scene record (see above; check-scene --sync to re-record)")
+        if report.matched:
+            scene.save(check_scene.updated(scene.load(), report))  # use measured positions from here on
     elif s.kind == "check_released":
         # In G1 mode "holding" only reflects finger position, so test physically: well above the
         # placed block, close the fingers. They close fully on air; they stop on a stuck block.
