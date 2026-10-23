@@ -2,6 +2,7 @@
 
     uv run check-placement a1 --start      # where the block starts, before a trial
     uv run check-placement a3 --from a1    # where it landed, after the trial
+    uv run check-placement c3 --from c1 --color yellow
 
 The block and the chessboard corners are measured in the same camera frame, so errors in the
 camera's mounting offset cancel out: the result is the block's physical offset on the mat.
@@ -23,7 +24,7 @@ import cv2
 import numpy as np
 
 from robotic_experiments.blocks import workspace
-from robotic_experiments.blocks.locate_mat import Capture, LocateError, capture
+from robotic_experiments.blocks.locate_mat import BLOCK_COLORS, Capture, LocateError, capture
 from robotic_experiments.connection import connect
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
@@ -86,22 +87,30 @@ def is_trial(record: dict) -> bool:
     return not record.get("recheck") and not record.get("start")
 
 
-def trial_number(recheck: bool) -> int:
+def trial_number(kind: str) -> int:
     """Number of the trial this check belongs to.
 
-    A result starts a new trial; a recheck belongs to the latest trial; a start measurement
-    belongs to the trial about to run.
+    A result starts a new trial; a recheck belongs to the latest trial; start measurements
+    belong to the trials about to run, in order (two starts before a two-block run -> N+1, N+2).
     """
-    trials = 0
-    if LOG_PATH.exists():
-        trials = sum(1 for line in LOG_PATH.read_text().splitlines() if line.strip() and is_trial(json.loads(line)))
-    return max(trials, 1) if recheck else trials + 1
+    recs = [json.loads(line) for line in LOG_PATH.read_text().splitlines() if line.strip()] if LOG_PATH.exists() else []
+    trials = sum(1 for r in recs if is_trial(r))
+    if kind == "recheck":
+        return max(trials, 1)
+    if kind == "start":
+        pending = 0
+        for r in reversed(recs):
+            if is_trial(r):
+                break
+            pending += bool(r.get("start"))
+        return trials + 1 + pending
+    return trials + 1
 
 
-def photo_name(trial: int, kind: str, src: str | None, p: Placement, when: datetime) -> str:
+def photo_name(trial: int, kind: str, color: str, src: str | None, p: Placement, when: datetime) -> str:
     move = f"{src}-to-{p.square}" if src else f"on-{p.square}"
     tag = f"trial-{trial:02d}{'-' + kind if kind else ''}"
-    return f"{tag}_{move}_{p.distance_mm:.1f}mm_{when:%Y-%m-%d_%H%M%S}.jpg"
+    return f"{tag}_{color}_{move}_{p.distance_mm:.1f}mm_{when:%Y-%m-%d_%H%M%S}.jpg"
 
 
 def annotate(c: Capture, ws: workspace.Workspace, p: Placement) -> tuple[np.ndarray, list[int]]:
@@ -141,9 +150,9 @@ def annotate(c: Capture, ws: workspace.Workspace, p: Placement) -> tuple[np.ndar
     return out, [int(x0), int(y0), int(x1), int(y1)]
 
 
-async def run(ws: workspace.Workspace, square: str) -> tuple[Placement, np.ndarray, list[int]]:
+async def run(ws: workspace.Workspace, square: str, color: str) -> tuple[Placement, np.ndarray, list[int]]:
     async with await connect() as machine:
-        c = await capture(machine)
+        c = await capture(machine, color)
     p = measure(c.world_lattice, c.block_world[:2], ws, square)
     return p, *annotate(c, ws, p)
 
@@ -153,6 +162,7 @@ def main() -> None:
     parser.add_argument("square", help="the square the block should be on, e.g. a3")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
     parser.add_argument("--from", dest="src", metavar="SQUARE", help="where the block was picked up (for naming)")
+    parser.add_argument("--color", choices=sorted(BLOCK_COLORS), default="red", help="which block to measure (default: red)")
     kind = parser.add_mutually_exclusive_group()
     kind.add_argument("--recheck", action="store_true", help="re-measuring a block already logged (not a new trial)")
     kind.add_argument("--start", action="store_true", help="where the block starts, before the next trial")
@@ -160,25 +170,25 @@ def main() -> None:
     ws = workspace.load(args.workspace)
     try:
         workspace.parse_square(args.square)
-        p, photo, crop = asyncio.run(run(ws, args.square))
+        p, photo, crop = asyncio.run(run(ws, args.square, args.color))
     except (LocateError, ValueError) as e:
         raise SystemExit(f"Could not check placement: {e}")
 
     now = datetime.now()
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    trial = trial_number(args.recheck)
     tag = "recheck" if args.recheck else "start" if args.start else ""
-    photo_path = PHOTO_DIR / photo_name(trial, tag, args.src, p, now)
+    trial = trial_number(tag)
+    photo_path = PHOTO_DIR / photo_name(trial, tag, args.color, args.src, p, now)
     cv2.imwrite(str(photo_path), photo)
 
     with LOG_PATH.open("a") as f:
         record = {**asdict(p), "placement_offset_in_use": list(ws.placement_offset_mm),
-                  "trial": trial, "from": args.src,
+                  "trial": trial, "from": args.src, "color": args.color,
                   "photo": str(photo_path), "crop_px": crop, "recheck": args.recheck, "start": args.start,
                   "recorded_at": now.isoformat(timespec="seconds")}
         f.write(json.dumps(record) + "\n")
 
-    print(f"Trial {trial}{f' ({tag})' if tag else ''}: block is {p.distance_mm:.1f} mm from the center of {p.square}:")
+    print(f"Trial {trial}{f' ({tag})' if tag else ''}: {args.color} block is {p.distance_mm:.1f} mm from the center of {p.square}:")
     print(f"  {p.along_files_mm:+.1f} mm along files (+ = toward h)")
     print(f"  {p.along_ranks_mm:+.1f} mm along ranks (+ = toward rank 8)")
     print(f"  ({p.corners_used} corners; this view's mat is {p.view_shift_mm:.1f} mm from the configured one)")

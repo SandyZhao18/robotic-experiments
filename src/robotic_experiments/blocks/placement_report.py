@@ -27,11 +27,15 @@ def load(square: str | None) -> list[dict]:
     if not LOG_PATH.exists():
         raise SystemExit(f"No trials logged yet ({LOG_PATH}).")
     recs = [json.loads(line) for line in LOG_PATH.read_text().splitlines() if line.strip()]
-    starts = {r["trial"]: r for r in recs if r.get("start")}
-    recs = [r for r in recs if is_trial(r) and (square is None or r["square"] == square)]
+    # Pair each result with the latest start measured for the same block on its pickup square.
+    pending = {}
     for r in recs:
-        if r.get("trial") in starts:
-            r["start_at"] = starts[r["trial"]]
+        key = (r.get("color", "red"), r["square"] if r.get("start") else r.get("from"))
+        if r.get("start"):
+            pending[key] = r
+        elif is_trial(r) and key in pending:
+            r["start_at"] = pending.pop(key)
+    recs = [r for r in recs if is_trial(r) and (square is None or r["square"] == square)]
     if not recs:
         raise SystemExit("No matching trials.")
     return recs
@@ -88,7 +92,7 @@ def tiles(recs: list[dict]) -> np.ndarray:
         else:
             label(tile, "no photo", (TILE // 2 - 45, TILE // 2), 0.6)
         cv2.rectangle(tile, (0, 0), (TILE - 1, TILE - 1), color(i + 1), 4)
-        move = f"{r['from']}->{r['square']}" if r.get("from") else r["square"]
+        move = f"{r.get('color', 'red')} {r['from']}->{r['square']}" if r.get("from") else r["square"]
         label(tile, f"{i + 1}: {move} {r['distance_mm']:.1f} mm", (8, 24), 0.6, 2)
         sheet[y * TILE:(y + 1) * TILE, x * TILE:(x + 1) * TILE] = tile
     return sheet

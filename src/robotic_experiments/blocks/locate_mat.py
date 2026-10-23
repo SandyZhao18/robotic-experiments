@@ -41,7 +41,16 @@ _SHAPES = [(7, 7), (7, 6), (6, 6), (7, 5), (6, 5), (7, 4), (5, 5), (6, 4), (7, 3
 PATTERNS = [p for a, b in _SHAPES for p in ((a, b), (b, a)) if a != b or p == (a, b)]
 PATTERNS = list(dict.fromkeys(sorted(PATTERNS, key=lambda p: -p[0] * p[1])))
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
-TOP_FACE_TOLERANCE_MM = 6.0  # red pixels this close to the nearest red surface count as the top face
+TOP_FACE_TOLERANCE_MM = 6.0  # block pixels this close to the nearest block surface count as the top face
+
+# HSV ranges per block color. The mat's wood squares and skin are reddish too but duller
+# (S <= ~140, dark squares V <= ~60); the red block measures S 170-240 depending on lighting.
+BLOCK_COLORS = {
+    "red": [((0, 150, 90), (8, 255, 255)), ((170, 150, 90), (180, 255, 255))],
+    # Measured: top H 28 S 131 V 197, side S 160. Mat/border H 5-11 or 96, tape and table H 97-98,
+    # so hue alone separates it; saturation floor kept well below the top face's 131.
+    "yellow": [((20, 80, 110), (38, 255, 255))],
+}
 DEPTH_DISAGREEMENT_WARN_MM = 10.0
 SQUARE_SIZE_TOLERANCE_MM = 1.5
 DEFAULT_WORKSPACE = "config/workspace.toml"
@@ -71,39 +80,39 @@ def find_corners(gray: np.ndarray) -> np.ndarray:
     raise LocateError("no chessboard corners found; is the mat in view and well lit?")
 
 
-def red_block_mask(bgr: np.ndarray) -> np.ndarray:
-    """Boolean mask of the largest red blob."""
+def block_mask(bgr: np.ndarray, color: str = "red") -> np.ndarray:
+    """Boolean mask of the largest blob of the block's color."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    # The mat's wood squares and skin are reddish too but duller (S <= ~140, dark squares V <= ~60);
-    # the block measures S 170-240 depending on lighting.
-    mask = cv2.inRange(hsv, (0, 150, 90), (8, 255, 255)) | cv2.inRange(hsv, (170, 150, 90), (180, 255, 255))
+    mask = np.zeros(hsv.shape[:2], np.uint8)
+    for lo, hi in BLOCK_COLORS[color]:
+        mask |= cv2.inRange(hsv, lo, hi)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     if n < 2:
-        raise LocateError("no red block found in view; put it on a1")
+        raise LocateError(f"no {color} block found in view")
     i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
     if stats[i, cv2.CC_STAT_AREA] < 300:
-        raise LocateError("red blob too small to be the block")
+        raise LocateError(f"{color} blob too small to be the block")
     return labels == i
 
 
 def find_red_block(bgr: np.ndarray) -> tuple[float, float]:
     """Pixel centroid of the largest red blob (top face plus any visible side faces)."""
-    v, u = np.nonzero(red_block_mask(bgr))
+    v, u = np.nonzero(block_mask(bgr, "red"))
     return float(u.mean()), float(v.mean())
 
 
-def find_block_top(bgr: np.ndarray, depth: np.ndarray) -> tuple[tuple[float, float], float]:
+def find_block_top(bgr: np.ndarray, depth: np.ndarray, color: str = "red") -> tuple[tuple[float, float], float]:
     """Pixel centroid and depth of the block's top face.
 
-    Seen at an angle, the red blob includes side faces, which pull its centroid sideways.
-    The top face is the red surface nearest the camera, so keep only red pixels within
-    TOP_FACE_TOLERANCE_MM of the nearest red depth.
+    Seen at an angle, the color blob includes side faces, which pull its centroid sideways.
+    The top face is the block surface nearest the camera, so keep only block pixels within
+    TOP_FACE_TOLERANCE_MM of the nearest block depth.
     """
-    mask = cv2.erode(red_block_mask(bgr).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)  # drop mixed edge pixels
+    mask = cv2.erode(block_mask(bgr, color).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)  # drop mixed edge pixels
     d = np.where(mask & (depth > 0), depth, np.nan)
     if np.isnan(d).all():
-        raise LocateError("no depth on the red block")
+        raise LocateError(f"no depth on the {color} block")
     nearest = np.nanpercentile(d, 5)
     top = d <= nearest + TOP_FACE_TOLERANCE_MM
     if top.sum() < 100:
@@ -282,7 +291,7 @@ class Capture:
     block_world: np.ndarray  # (3,) block top center
 
 
-async def capture(machine) -> Capture:
+async def capture(machine, color: str = "red") -> Capture:
     if await Arm.from_robot(machine, ARM).is_moving():
         raise LocateError("arm is moving; wait for it to stop")
     cam = Camera.from_robot(machine, CAMERA)
@@ -300,7 +309,7 @@ async def capture(machine) -> Capture:
     corners = find_corners(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
     rows, cols = corners.shape[:2]
     px = corners.reshape(-1, 2)
-    block_px, block_depth = find_block_top(bgr, depth)
+    block_px, block_depth = find_block_top(bgr, depth, color)
 
     depths = np.array([sample_depth(depth, u, v) for u, v in px])
     on_plane = project_onto_plane(px, depths, intr)

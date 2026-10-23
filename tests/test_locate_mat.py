@@ -79,3 +79,14 @@ def test_block_top_ignores_visible_side_face():
     assert (u, v) == pytest.approx((109.5, 109.5), abs=2.5)
     assert d == pytest.approx(420.0)
     assert find_red_block(bgr)[0] < 105  # the whole blob is pulled toward the side face
+
+
+def test_yellow_and_red_blocks_are_told_apart():
+    from robotic_experiments.blocks.locate_mat import block_mask
+
+    bgr = np.full((200, 200, 3), (150, 170, 190), np.uint8)  # light wood-ish
+    bgr[20:60, 20:60] = (40, 40, 200)  # red block
+    bgr[120:170, 120:170] = (40, 200, 220)  # yellow block (BGR)
+    red, yellow = block_mask(bgr, "red"), block_mask(bgr, "yellow")
+    assert red[40, 40] and not red[140, 140]
+    assert yellow[140, 140] and not yellow[40, 40]
