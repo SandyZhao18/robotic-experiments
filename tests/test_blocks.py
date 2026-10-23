@@ -52,7 +52,7 @@ def test_one_block_sequence():
     assert a.pickup_square == "a1" and a.cell == (1, 1) and a.cell_square == "e5"
     kinds = [s.kind for s in p.steps]
     assert kinds == ["move", "move", "move", "open", "move", "grab", "move", "move",
-                     "move", "move", "move", "release", "move", "move", "move"]
+                     "move", "move", "move", "release", "move", "check_released", "move", "move"]
     grip = next(s for s in p.steps if s.label.startswith("descend"))
     assert (grip.target.x, grip.target.y, grip.target.z) == (*WS.pickups[0], WS.grip_z)
     lower = next(s for s in p.steps if s.label.startswith("lower"))

@@ -126,6 +126,13 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
             await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
         else:
             await bounded(open_partly(gripper, ws.open_position), grip_timeout + 5, s.label)
+    elif s.kind == "check_released":
+        # In G1 mode "holding" only reflects finger position, so test physically: well above the
+        # placed block, close the fingers. They close fully on air; they stop on a stuck block.
+        await bounded(gripper.grab(timeout=grip_timeout), grip_timeout + 5, s.label)
+        pos = (await bounded(gripper.do_command({"get": True}), 10, "reading gripper position"))["pos"]
+        if pos > STUCK_BLOCK_MIN_POSITION:
+            raise Abort(f"block still stuck in the gripper after release (fingers stopped at {pos:.0f})")
     elif s.kind == "grab":
         grabbed = await bounded(gripper.grab(timeout=grip_timeout), grip_timeout + 5, s.label)
         holding = await bounded(gripper.is_holding_something(), 10, "checking grasp")
@@ -136,6 +143,7 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
 
 
 GRIPPER_POSITION_TOLERANCE = 20.0  # gripper units (~2 mm)
+STUCK_BLOCK_MIN_POSITION = 100.0  # fingers stopping above this (~18 mm gap) are on a block, not closed
 
 
 async def open_partly(gripper, position: float) -> None:

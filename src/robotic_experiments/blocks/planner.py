@@ -22,7 +22,7 @@ class Target:
 
 @dataclass(frozen=True)
 class Step:
-    kind: str  # "move" | "open" | "grab" | "release"
+    kind: str  # "move" | "open" | "grab" | "release" | "check_released"
     label: str
     block: int | None = None  # index of the block this step belongs to
     target: Target | None = None
@@ -153,6 +153,7 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
             Step("move", f"lower block onto {dst}", b, at(a.cell_xy, release_z)),
             Step("release", "open fingers to release", b),
             Step("move", "retreat upward", b, at(a.cell_xy, above)),
+            Step("check_released", "close fingers to confirm the block was let go", b),
             Step("move", "retreat to travel height", b, at(a.cell_xy, ws.travel_z)),
         ]
     steps.append(Step("move", "return to safe start", target=Target(*ws.safe_start, ws.theta_deg)))
