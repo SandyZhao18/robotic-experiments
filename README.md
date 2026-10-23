@@ -128,6 +128,7 @@ uv run placement-report
 | tower2 again, stacked blocks released almost touching + camera check | top 63 mm, 3.6 mm from target |
 | **tower3** resumed from the scene record (third cube only) | top 94 mm, 0.8 mm from target |
 | **Bridge** from camera-found blocks: cubes a3, b3; blue brick across a3\|b3; cube on top | brick top 63 mm / 2.7 mm, top cube 94 mm / 0.7 mm |
+| **Cylinder arch** from camera-found blocks: cylinders a3, b3 (gripped 20 mm higher); brick across; cube on top | brick top 92 mm / 1.9 mm, top cube 122 mm / 3.9 mm |
 
 ### Building from cubes the camera finds
 
