@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 
 from robotic_experiments.blocks.design import Design
-from robotic_experiments.blocks.workspace import Workspace
+from robotic_experiments.blocks.workspace import Workspace, parse_square
 
 
 @dataclass(frozen=True)
@@ -50,22 +50,46 @@ class PlanError(ValueError):
     pass
 
 
-def plan(design: Design, ws: Workspace) -> Plan:
-    """Build a 3x3 design: fill cells row by row from pickup squares in order."""
-    problems = ws.problems()
+@dataclass(frozen=True)
+class Loose:
+    """A block found by the camera: a label and its mat coordinates (square (F, R) at whole numbers)."""
+
+    label: str
+    f: float
+    r: float
+    pickable: bool = True
+
+
+def plan(design: Design, ws: Workspace, loose: list[Loose] | None = None) -> Plan:
+    """Build a 3x3 design: fill cells row by row, from the pickup squares in order or, with
+    `loose`, from blocks found by the camera (the first pickable ones, in the given order)."""
+    problems = ws.problems() if loose is None else ws.mat_problems() + ws.grid_problems()
     if problems:
         raise PlanError("; ".join(problems))
     filled = design.filled()
+    sources = ([(sq, ws.square_xy(sq), parse_square(sq)) for sq in ws.pickup_squares] if loose is None
+               else [(c.label, ws.xy_at(c.f, c.r), (c.f, c.r)) for c in loose if c.pickable])
     if not filled:
         problems.append("design has no filled cells")
-    if len(filled) > len(ws.pickups):
-        problems.append(f"design needs {len(filled)} blocks but only {len(ws.pickups)} pickup spots are configured")
+    if len(filled) > len(sources):
+        what = "pickup spots are configured" if loose is None else "pickable blocks were found"
+        problems.append(f"design needs {len(filled)} blocks but only {len(sources)} {what}")
     if problems:
         raise PlanError("; ".join(problems))
 
+    if loose is not None:
+        # Every block on the mat, chosen or not, must clear the fully open fingers at each pickup.
+        chosen = sources[: len(filled)]
+        for i, (label, _, at) in enumerate(chosen):
+            for c in loose:
+                if (c.f, c.r) != at and (why := ws.finger_conflict_at(at, (c.f, c.r), ws.full_open_span_mm, c.label)):
+                    problems.append(f"picking {label}: {why} - spread the blocks apart")
+        if problems:
+            raise PlanError("; ".join(problems))
+
     assignments = tuple(
-        Assignment(i, i, ws.pickup_squares[i], ws.pickups[i], cell, ws.cell_square(*cell), ws.cell_xy(*cell))
-        for i, cell in enumerate(filled)
+        Assignment(i, i, label, xy, cell, ws.cell_square(*cell), ws.cell_xy(*cell))
+        for i, ((label, xy, _), cell) in enumerate(zip(sources, filled))
     )
     return Plan(design, assignments, _pick_and_place_steps(ws, assignments))
 

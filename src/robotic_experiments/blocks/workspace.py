@@ -92,12 +92,16 @@ class Workspace:
         The fingers reach span/2 along their opening direction but only finger_width/2 across it,
         so blocks beside the fingers can be much closer than blocks in front of them.
         """
-        (u1, v1), (u2, v2) = self.square_uv(square), self.square_uv(neighbour)
+        return self.finger_conflict_at(parse_square(square), parse_square(neighbour), span_mm, neighbour)
+
+    def finger_conflict_at(self, at: Vec2, other: Vec2, span_mm: float, label: str) -> str | None:
+        """finger_conflict for mat coordinates (f, r) instead of square names."""
+        (u1, v1), (u2, v2) = self.uv_at(*at), self.uv_at(*other)
         d_open, d_across = (abs(v2 - v1), abs(u2 - u1)) if self.fingers_open_along_ranks else (abs(u2 - u1), abs(v2 - v1))
         half, margin = self.block_size_mm / 2, self.finger_clearance_mm
         need_open, need_across = span_mm / 2 + half + margin, self.finger_width_mm / 2 + half + margin
         if d_open < need_open and d_across < need_across:
-            return (f"{neighbour} is {d_open:.0f} mm away along the finger opening (need {need_open:.0f}) "
+            return (f"{label} is {d_open:.0f} mm away along the finger opening (need {need_open:.0f}) "
                     f"and {d_across:.0f} mm across it (need {need_across:.0f})")
         return None
 
@@ -180,6 +184,10 @@ class Workspace:
     def problems(self) -> list[str]:
         """All static checks: the mat and heights, plus the build grid and pickup layout."""
         return self.mat_problems() + self.layout_problems()
+
+    def grid_problems(self) -> list[str]:
+        """layout_problems without the fixed pickup squares (for cubes found by the camera)."""
+        return [p for p in self.layout_problems() if not p.startswith("pickup")]
 
     def mat_problems(self) -> list[str]:
         """Checks needed for any move on the mat: recorded corners and heights."""

@@ -101,11 +101,41 @@ def annotate(frame: Frame, found: list[Found], ws: workspace.Workspace) -> np.nd
     return img
 
 
-async def find(ws: workspace.Workspace) -> tuple[list[Found], np.ndarray]:
+FIND_POSE_TOLERANCE_MM = 20.0
+
+
+async def find(ws: workspace.Workspace, require_find_pose: bool = False) -> tuple[list[Found], np.ndarray]:
     async with await connect() as machine:
+        if require_find_pose:
+            from robotic_experiments.blocks.executor import gripper_pose  # avoid a module cycle
+
+            p = await gripper_pose(machine, ws.frame)
+            off = math.dist((p.x, p.y, p.z), ws.find_pose)
+            if off > FIND_POSE_TOLERANCE_MM:
+                x, y, z = ws.find_pose
+                raise LocateError(f"the gripper is {off:.0f} mm from the find pose; first run: "
+                                  f"uv run blocks-run --goto {x:.0f} {y:.0f} {z:.0f}")
         frame = await capture_frame(machine)
     found = locate(frame, ws)
     return found, annotate(frame, found, ws)
+
+
+def save_photo(photo: np.ndarray, n: int) -> Path:
+    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+    path = PHOTO_DIR / f"find_{datetime.now():%Y-%m-%d_%H%M%S}_{n}-cubes.jpg"
+    cv2.imwrite(str(path), photo)
+    return path
+
+
+def table(found: list[Found], ws: workspace.Workspace) -> str:
+    lines = [f"  {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  {'top face':>9s}  pickable?"]
+    for c in found:
+        df, dr = c.offset_mm(ws.square_size_mm)
+        w, h = c.top_size_mm
+        why = c.usable(ws)
+        lines.append(f"  {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  "
+                     f"{w:3.0f} x {h:3.0f}  {'yes' if why is None else 'no: ' + why}")
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -118,16 +148,9 @@ def main() -> None:
     except LocateError as e:
         raise SystemExit(f"Could not find cubes: {e}")
 
-    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    path = PHOTO_DIR / f"find_{datetime.now():%Y-%m-%d_%H%M%S}_{len(found)}-cubes.jpg"
-    cv2.imwrite(str(path), photo)
+    path = save_photo(photo, len(found))
     print(f"{len(found)} cube(s) in view:")
-    print(f"  {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  {'top face':>9s}  pickable?")
-    for c in found:
-        df, dr = c.offset_mm(ws.square_size_mm)
-        w, h = c.top_size_mm
-        why = c.usable(ws)
-        print(f"  {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  {w:3.0f} x {h:3.0f}  {'yes' if why is None else 'no: ' + why}")
+    print(table(found, ws))
     print(f"Photo: {path}")
 
 

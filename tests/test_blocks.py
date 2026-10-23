@@ -161,3 +161,31 @@ def test_preflight_treats_partial_opening_as_empty():
     assert not parked_open(SimpleNamespace(meta={"position": 220.0}), ws)  # a cube in the fingers
     assert not parked_open(SimpleNamespace(meta={}), ws)
     assert not parked_open(SimpleNamespace(meta={"position": 362.0}), dataclasses.replace(WS, open_position=None))
+
+
+def test_plan_from_loose_blocks_uses_pickable_ones_in_order():
+    from robotic_experiments.blocks.planner import Loose
+
+    ws = dataclasses.replace(WS, theta_deg=-91.0)
+    loose = [Loose("twisted", 6.0, 0.0, pickable=False), Loose("red", 6.0, 3.0), Loose("blue", 7.0, 5.0)]
+    p = plan(Design.parse("...|...|##."), ws, loose)
+    assert [a.pickup_square for a in p.assignments] == ["red", "blue"]
+    assert p.assignments[0].pickup_xy == ws.xy_at(6.0, 3.0)
+
+
+def test_plan_from_loose_blocks_refuses_crowded_pickups():
+    from robotic_experiments.blocks.planner import Loose
+
+    ws = dataclasses.replace(WS, theta_deg=-91.0)
+    # 0.8 squares apart along ranks (the finger opening): too close for fully open fingers,
+    # even though the neighbour itself is not chosen
+    loose = [Loose("red", 6.0, 1.0), Loose("twisted", 6.0, 1.8, pickable=False)]
+    with pytest.raises(PlanError, match="spread the blocks apart"):
+        plan(Design.preset("one"), ws, loose)
+
+
+def test_plan_from_loose_blocks_needs_enough():
+    from robotic_experiments.blocks.planner import Loose
+
+    with pytest.raises(PlanError, match="only 1 pickable blocks were found"):
+        plan(Design.preset("line"), WS, [Loose("red", 6.0, 1.0)])

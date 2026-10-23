@@ -8,12 +8,15 @@
 """
 
 import argparse
+import asyncio
 import dataclasses
 import sys
 
 from robotic_experiments.blocks import workspace
 from robotic_experiments.blocks.design import PRESETS, Design
-from robotic_experiments.blocks.planner import Plan, PlanError, plan, plan_goto, plan_hover, plan_open_gripper, plan_transfer
+from robotic_experiments.blocks.planner import (
+    Loose, Plan, PlanError, plan, plan_goto, plan_hover, plan_open_gripper, plan_transfer,
+)
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
 DEFAULT_HOVER_Z = 150.0
@@ -29,6 +32,8 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--goto", nargs=3, type=float, metavar=("X", "Y", "Z"), help="move the gripper to a point, e.g. to aim the camera")
     parser.add_argument("--grid-top-left", metavar="SQUARE", help="override the build grid's top-left square")
     parser.add_argument("--grid-stride", type=int, help="override squares between design cells (1 = adjacent)")
+    parser.add_argument("--find", action="store_true",
+                        help="pick up blocks found by the camera in the supply files (arm must be at the find pose)")
     parser.add_argument("--pickups", nargs="+", metavar="SQUARE", help="override the pickup squares, in order")
     parser.add_argument("--hover-z", type=float, default=DEFAULT_HOVER_Z, help="gripper z for --hover (default: %(default)s)")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
@@ -57,7 +62,24 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
     if args.hover:
         workspace.parse_square(args.hover)
         return plan_hover(ws, args.hover, args.hover_z)
-    return plan(Design.preset(args.preset) if args.preset else Design.parse(args.grid), ws)
+    design = Design.preset(args.preset) if args.preset else Design.parse(args.grid)
+    if not args.find:
+        return plan(design, ws)
+    return plan(design, ws, find_loose(ws))
+
+
+def find_loose(ws: workspace.Workspace) -> list[Loose]:
+    """Find blocks with the camera (read-only) and list them for the planner, pickable ones first."""
+    from robotic_experiments.blocks import find_cubes  # needs the camera stack; only load when used
+
+    try:
+        found, photo = asyncio.run(find_cubes.find(ws, require_find_pose=True))
+    except find_cubes.LocateError as e:
+        raise ValueError(f"camera: {e}") from e
+    print(f"Camera found {len(found)} block(s):")
+    print(find_cubes.table(found, ws))
+    print(f"Photo: {find_cubes.save_photo(photo, len(found))}\n")
+    return [Loose(f"{c.color} {c.square}", c.f, c.r, c.usable(ws) is None) for c in found]
 
 
 def describe(p: Plan, ws: workspace.Workspace) -> str:
