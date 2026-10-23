@@ -124,6 +124,10 @@ uv run placement-report
 | **Adjacent L in a single run**, pickups a1–e1 (25–29) | 72 steps, no stops; ranks −1.3 to +2.8 mm, worst 6.6 mm (files offset carried from hand placement) |
 | Camera-found twisted cube (31): red found −24° on f1, wrist turned to match | placed on c5 2.8 mm off, square within 3° |
 | **Adjacent L from camera-found cubes** (32–36), one run | 1.3–5.4 mm off center, mean ranks 0.0 mm |
+| 2-cube stack (tower2): first try, released 2 mm above (measured 5 mm gap) | second cube fell off |
+| tower2 again, stacked blocks released almost touching + camera check | top 63 mm, 3.6 mm from target |
+| **tower3** resumed from the scene record (third cube only) | top 94 mm, 0.8 mm from target |
+| **Bridge** from camera-found blocks: cubes a3, b3; blue brick across a3\|b3; cube on top | brick top 63 mm / 2.7 mm, top cube 94 mm / 0.7 mm |
 
 ### Building from cubes the camera finds
 
@@ -143,6 +147,24 @@ from the top face's edges (repeats within ~1.5°). Twisted cubes are grabbed wit
 to match (turned at travel height) and placed square. The plan refuses cubes out of reach and
 cubes whose open fingers (at their turned angle) would touch a cube still waiting, and picks in an
 order that avoids that where possible. The run re-finds the cubes before moving: keep hands off.
+
+### Structures: stacking, seams, bricks
+
+Build files (`designs/*.toml`) list blocks bottom first, on squares or seams (`a3|b3`), with
+shapes `cube`, `brick` (`along = "files"|"ranks"`) and `cylinder`. The planner rests each block on
+what is under it and refuses blocks that would tip or barely touch their support.
+
+```sh
+uv run blocks-dry-run --build designs/bridge.toml --find     # blocks found by the camera
+uv run blocks-run --build designs/tower3.toml --approved     # or `from = "f1"` per block
+uv run check-scene [--update | --sync]                       # scene record vs camera
+```
+
+`runs/scene.json` records every placed block. A build run checks the build area against it right
+after the safe start (and stops on any difference), resumes after blocks already built, treats
+recorded blocks as obstacles (finger clearance, travel height, motion planner for sideways moves),
+releases stacked blocks almost touching (`stack_release_offset_mm`), and has the camera confirm
+each stacked block stayed on top before going on.
 
 ### Known issues
 
