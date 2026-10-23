@@ -137,3 +137,15 @@ def test_transfer_refuses_dropping_next_to_a_waiting_block():
     ws = dataclasses.replace(WS, open_position=400.0, open_finger_span_mm=65.0, finger_clearance_mm=30.0)
     with pytest.raises(PlanError, match="block on c1"):
         plan_transfer(ws, [("a1", "b1"), ("c1", "c3")])
+
+
+def test_preflight_treats_partial_opening_as_empty():
+    from types import SimpleNamespace
+
+    from robotic_experiments.blocks.executor import parked_open
+
+    ws = dataclasses.replace(WS, open_position=360.0)
+    assert parked_open(SimpleNamespace(meta={"position": 362.0}), ws)
+    assert not parked_open(SimpleNamespace(meta={"position": 220.0}), ws)  # a cube in the fingers
+    assert not parked_open(SimpleNamespace(meta={}), ws)
+    assert not parked_open(SimpleNamespace(meta={"position": 362.0}), dataclasses.replace(WS, open_position=None))

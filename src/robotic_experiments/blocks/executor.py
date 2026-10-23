@@ -78,11 +78,22 @@ async def preflight(machine, ws: workspace.Workspace) -> None:
     if await Arm.from_robot(machine, ARM).is_moving():
         raise Abort("arm is moving")
     holding = await Gripper.from_robot(machine, GRIPPER).is_holding_something()
-    if holding.is_holding_something:
+    if holding.is_holding_something and not parked_open(holding, ws):
         raise Abort("gripper reports it is already holding something")
 
     p = await gripper_pose(machine, ws.frame)
     print(f"preflight ok. gripper now at x={p.x:.1f} y={p.y:.1f} z={p.z:.1f} (o_z={p.o_z:.2f})")
+
+
+def parked_open(holding, ws) -> bool:
+    """True when "holding" only reflects fingers resting at the configured partial opening.
+
+    In the module's G1 mode, holding means the position is between fully closed (10) and fully
+    open (830), so a partial opening always reads as holding. A held 30 mm cube sits near 220,
+    well away from open_position.
+    """
+    pos = (holding.meta or {}).get("position")
+    return ws.open_position is not None and pos is not None and abs(pos - ws.open_position) <= 2 * GRIPPER_POSITION_TOLERANCE + 5
 
 
 async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: float, grip_timeout: float) -> None:
