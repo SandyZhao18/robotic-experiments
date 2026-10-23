@@ -5,9 +5,10 @@ whole board, but must see the a1 corner), then:
 
     uv run locate-mat
 
-It finds the chessboard's inner corners in the color image, traces each one's line of sight
-in `world` down to the mat surface (table z + mat thickness, from the workspace config), and
-fits the board. Depth is used only as a cross-check of the camera's height above the mat. The red block marks
+It finds the chessboard's inner corners in the color image, measures them in 3D with depth
+(projected onto a plane fitted to the mat to average out noise), converts them to `world`,
+and fits the board. Only x/y are taken from the camera: heights come from the configured
+table. The fitted square size must match the ruler-measured one, which checks the depth scale. The red block marks
 a1; standard board handedness (files left->right, ranks bottom->top from white's side)
 fixes which direction is files. Results go to config/mat_calibration.json together with
 an annotated image to check by eye against the printed labels.
@@ -38,6 +39,7 @@ OUT_IMAGE = Path("config/mat_calibration.jpg")
 PATTERNS = [(7, 7), (7, 6), (6, 7), (7, 5), (5, 7), (6, 6), (6, 5), (5, 6), (5, 5)]
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
 DEPTH_DISAGREEMENT_WARN_MM = 10.0
+SQUARE_SIZE_TOLERANCE_MM = 1.5
 DEFAULT_WORKSPACE = "config/workspace.toml"
 
 
@@ -68,8 +70,9 @@ def find_corners(gray: np.ndarray) -> np.ndarray:
 def find_red_block(bgr: np.ndarray) -> tuple[float, float]:
     """Pixel centroid of the largest red blob."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    # The mat's wood squares are reddish too (S <= ~140); the block is far more saturated (S ~240).
-    mask = cv2.inRange(hsv, (0, 180, 90), (6, 255, 255)) | cv2.inRange(hsv, (172, 180, 90), (180, 255, 255))
+    # The mat's wood squares and skin are reddish too but duller (S <= ~140, dark squares V <= ~60);
+    # the block measures S 170-240 depending on lighting.
+    mask = cv2.inRange(hsv, (0, 150, 90), (8, 255, 255)) | cv2.inRange(hsv, (170, 150, 90), (180, 255, 255))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     n, _, stats, centroids = cv2.connectedComponentsWithStats(mask)
     if n < 2:
@@ -230,17 +233,9 @@ async def to_world(machine, pts_cam: np.ndarray) -> np.ndarray:
     return np.array(out)
 
 
-async def to_plane(machine, ray_dirs: np.ndarray, plane_z: float) -> np.ndarray:
-    """Intersect camera rays (camera frame, z = 1) with the horizontal plane z = plane_z in `world`."""
-    ends = await to_world(machine, np.vstack([[0.0, 0.0, 0.0], ray_dirs * 500.0]))
-    origin, far = ends[0], ends[1:]
-    t = (plane_z - origin[2]) / (far[:, 2] - origin[2])
-    return origin + t[:, None] * (far - origin)
-
-
 @dataclass
 class DepthCheck:
-    """What depth alone says, compared with the configured table. Diagnostic only."""
+    """Where the camera's frame puts the mat and block heights, compared with the configured table."""
 
     mat_z: float
     disagreement_mm: float  # depth-measured mat z minus configured mat z
@@ -269,18 +264,19 @@ async def capture_and_fit(ws: workspace.Workspace) -> tuple[MatFit, DepthCheck, 
         px = corners.reshape(-1, 2)
         block_px = find_red_block(bgr)
 
-        # Positions: line of sight to the known surfaces.
-        world_corners = await to_plane(machine, rays(px, *intr), ws.mat_top_z)
-        block_world = (await to_plane(machine, rays(np.array([block_px]), *intr), ws.mat_top_z + ws.block_size_mm))[0]
-
-        # Cross-check: where depth alone puts the mat and the block top.
         depths = np.array([sample_depth(depth, u, v) for u, v in px])
-        depth_mat_center = project_onto_plane(px, depths, intr).mean(axis=0)
-        depth_block = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
-        depth_mat_z, depth_block_z = (await to_world(machine, np.vstack([depth_mat_center, depth_block])))[:, 2]
+        on_plane = project_onto_plane(px, depths, intr)
+        block_cam = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
+        world = await to_world(machine, np.vstack([on_plane, block_cam]))
 
-    world_lattice = world_corners.reshape(rows, cols, 3)
+    world_lattice, block_world = world[:-1].reshape(rows, cols, 3), world[-1]
+    depth_mat_z, depth_block_z = float(world_lattice[..., 2].mean()), float(block_world[2])
     fit = fit_board(world_lattice, block_world)
+    if abs(fit.square_size_mm - ws.square_size_mm) > SQUARE_SIZE_TOLERANCE_MM:
+        raise LocateError(
+            f"camera measures {fit.square_size_mm:.1f} mm squares but the ruler says {ws.square_size_mm} mm; "
+            "depth scale or intrinsics are off"
+        )
     check = DepthCheck(
         mat_z=float(depth_mat_z),
         disagreement_mm=float(depth_mat_z - ws.mat_top_z),
@@ -307,18 +303,19 @@ def main() -> None:
         "recorded_at": datetime.now().isoformat(timespec="seconds"),
     }, indent=2) + "\n")
     cv2.imwrite(str(OUT_IMAGE), image)
-    print(f"Mat located from {fit.corners_used} corners (fit residual {fit.residual_rms_mm:.2f} mm),")
-    print(f"on the mat surface z = {ws.mat_top_z:.1f} (table {ws.table_z:.1f} + mat {ws.mat_thickness_mm:.1f}):")
+    print(f"Mat located from {fit.corners_used} corners (fit residual {fit.residual_rms_mm:.2f} mm).")
+    print(f"Heights from config: mat surface z = {ws.mat_top_z:.1f} (table {ws.table_z:.1f} + mat {ws.mat_thickness_mm:.1f}).")
     print(f"  a1 = [{fit.a1[0]:.1f}, {fit.a1[1]:.1f}]")
     print(f"  h1 = [{fit.h1[0]:.1f}, {fit.h1[1]:.1f}]")
     print(f"  a8 = [{fit.a8[0]:.1f}, {fit.a8[1]:.1f}]")
-    print(f"  square size {fit.square_size_mm:.1f} mm, files point {fit.file_yaw_deg:.1f}° from world +x")
+    print(f"  square size {fit.square_size_mm:.1f} mm (ruler {ws.square_size_mm}), files point {fit.file_yaw_deg:.1f}° from world +x")
     print(f"  block is {fit.block_offset_from_a1_mm:.1f} mm from the computed a1 center")
-    print(f"Depth check: depth puts the mat at z = {check.mat_z:.1f} ({check.disagreement_mm:+.1f} mm vs config), "
+    print(f"Height check: the camera's frame puts the mat at z = {check.mat_z:.1f} ({check.disagreement_mm:+.1f} mm vs table config), "
           f"block height {check.block_height_mm:.1f} mm")
     if abs(check.disagreement_mm) > DEPTH_DISAGREEMENT_WARN_MM:
-        print(f"  WARNING: depth and the configured table disagree by {abs(check.disagreement_mm):.0f} mm. Either the table z "
-              "or the camera's mounting offset is wrong, and x/y above inherit that error. Resolve before trusting them.")
+        print(f"  NOTE: the camera frame sits about {abs(check.disagreement_mm):.0f} mm "
+              f"{'too high' if check.disagreement_mm > 0 else 'too low'} relative to the table. With the camera pointing "
+              "down this barely affects x/y, but the camera's mounting offset in the Viam config should be corrected.")
     print(f"Saved {OUT_JSON} and {OUT_IMAGE} — check the square labels in the image match the mat.")
 
 
