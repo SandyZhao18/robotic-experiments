@@ -101,9 +101,7 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
     gripper = Gripper.from_robot(machine, GRIPPER)
     if s.kind == "move":
         t = s.target
-        # Straight up/down moves keep a straight line; a pure wrist turn (same point, new theta) can't.
-        vertical = (prev is not None and math.dist((prev.x, prev.y), (t.x, t.y)) <= VERTICAL_XY_TOLERANCE_MM
-                    and abs(prev.z - t.z) > 1.0 and abs((prev.theta - t.theta + 180) % 360 - 180) < 1.0)
+        vertical = prev is not None and math.dist((prev.x, prev.y), (t.x, t.y)) <= VERTICAL_XY_TOLERANCE_MM
         motion = MotionClient.from_robot(machine, MOTION)
         ok = await bounded(
             motion.move(

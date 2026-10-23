@@ -161,21 +161,3 @@ def test_preflight_treats_partial_opening_as_empty():
     assert not parked_open(SimpleNamespace(meta={"position": 220.0}), ws)  # a cube in the fingers
     assert not parked_open(SimpleNamespace(meta={}), ws)
     assert not parked_open(SimpleNamespace(meta={"position": 362.0}), dataclasses.replace(WS, open_position=None))
-
-
-def test_recenter_regrasps_turned_on_the_free_square():
-    from robotic_experiments.blocks.planner import turned
-
-    ws = dataclasses.replace(WS, theta_deg=-91.0, recenter_square="g7")
-    p = plan_transfer(ws, [("a1", "a3")], recenter=True)
-    turns = [s for s in p.steps if s.target and abs(s.target.theta - turned(-91.0)) < 1e-9]
-    assert turned(-91.0) == -1.0 and turned(179.0) == -91.0
-    assert turns and all((s.target.x, s.target.y) == ws.square_xy("g7") for s in turns)
-    grabs = [s.label for s in p.steps if s.kind == "grab"]
-    assert len(grabs) == 3  # pickup, turned re-grasp, final grasp
-
-
-def test_recenter_square_must_be_clear():
-    ws = dataclasses.replace(WS, theta_deg=-91.0, recenter_square="a2")
-    with pytest.raises(PlanError, match="re-centering square a2"):
-        plan_transfer(ws, [("a1", "a3")], recenter=True)

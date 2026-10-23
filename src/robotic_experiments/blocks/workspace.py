@@ -55,7 +55,6 @@ class Workspace:
     grid_top_left: str  # square under design cell (row 0, col 0)
     grid_stride: int  # squares between neighbouring design cells
     pickup_squares: tuple[str, ...]  # used in this order
-    recenter_square: str | None  # free square where --recenter re-grasps each block at 90 degrees
 
     block_size_mm: float
     open_finger_span_mm: float  # outer width of the fingers when releasing (at open_position, if set)
@@ -83,10 +82,6 @@ class Workspace:
     def fingers_open_along_ranks(self) -> bool:
         """At theta = -91 (or 89) the fingers open along the ranks; 90 degrees off, along the files."""
         return abs((self.theta_deg + 91) % 180) < 45 or abs((self.theta_deg + 91) % 180) > 135
-
-    def turning_clearance_mm(self) -> float:
-        """Distance a block must keep from a square where the wrist turns with fingers fully open."""
-        return self.full_open_span_mm / 2 + self.block_size_mm / math.sqrt(2) + self.finger_clearance_mm
 
     def finger_conflict(self, square: str, neighbour: str, span_mm: float) -> str | None:
         """Why open fingers (outer span `span_mm`) at `square` would touch a block on `neighbour`, or None.
@@ -235,7 +230,6 @@ def load(path: str | Path) -> Workspace:
         grid_top_left=g["top_left"],
         grid_stride=int(g["stride"]),
         pickup_squares=pickups,
-        recenter_square=d["pickups"].get("recenter_square"),
         block_size_mm=float(d["block"]["size_mm"]),
         open_finger_span_mm=float(grip["open_finger_span_mm"]),
         finger_clearance_mm=float(grip["finger_clearance_mm"]),
