@@ -43,14 +43,25 @@ PATTERNS = list(dict.fromkeys(sorted(PATTERNS, key=lambda p: -p[0] * p[1])))
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
 TOP_FACE_TOLERANCE_MM = 6.0  # block pixels this close to the nearest block surface count as the top face
 
-# HSV ranges per block color. The mat's wood squares and skin are reddish too but duller
-# (S <= ~140, dark squares V <= ~60); the red block measures S 170-240 depending on lighting.
+# HSV ranges per block color, measured on the real cubes under the lab light. The mat's wood
+# squares and skin are reddish too but duller (S <= ~90 lit, dark squares V <= ~60).
+# Red (H 0-2) and orange (H 4-7) are too close for per-pixel ranges, so both are found with
+# one "warm" range and each blob is then named by its median hue.
+WARM = [((0, 100, 90), (12, 255, 255)), ((170, 100, 90), (180, 255, 255))]
+RED_MAX_MEDIAN_HUE = 3  # a warm blob with median hue <= 3 (or >= 170) is red, otherwise orange
 BLOCK_COLORS = {
-    "red": [((0, 150, 90), (8, 255, 255)), ((170, 150, 90), (180, 255, 255))],
-    # Measured: top H 28 S 131 V 197, side S 160. Mat/border H 5-11 or 96, tape and table H 97-98,
-    # so hue alone separates it; saturation floor kept well below the top face's 131.
+    "red": WARM,
+    "orange": WARM,
+    # Yellow: top H 28 S 131-207. Mat/border H 0-13 or ~96, tape and table H 97-99.
     "yellow": [((20, 80, 110), (38, 255, 255))],
+    # Green: H 84-86 S 222-255 V 93-141. The blue tape is H 98-99, so stay below ~92.
+    "green": [((70, 120, 60), (92, 255, 255))],
 }
+
+
+def _warm_name(hsv: np.ndarray, mask: np.ndarray) -> str:
+    h = np.median(hsv[..., 0][mask])
+    return "red" if h <= RED_MAX_MEDIAN_HUE or h >= 170 else "orange"
 DEPTH_DISAGREEMENT_WARN_MM = 10.0
 SQUARE_SIZE_TOLERANCE_MM = 1.5
 DEFAULT_WORKSPACE = "config/workspace.toml"
@@ -86,14 +97,22 @@ MIN_BLOB_PX = 300
 def block_blobs(bgr: np.ndarray, colors) -> list[tuple[str, np.ndarray]]:
     """(color, mask) for every blob of the given block colors, largest first."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    wanted = set(colors)
+    families = {"warm" if c in ("red", "orange") else c for c in wanted}
     out = []
-    for color in colors:
+    for family in families:
         mask = np.zeros(hsv.shape[:2], np.uint8)
-        for lo, hi in BLOCK_COLORS[color]:
+        for lo, hi in WARM if family == "warm" else BLOCK_COLORS[family]:
             mask |= cv2.inRange(hsv, lo, hi)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
         n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
-        out += [(color, labels == i, stats[i, cv2.CC_STAT_AREA]) for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= MIN_BLOB_PX]
+        for i in range(1, n):
+            if stats[i, cv2.CC_STAT_AREA] < MIN_BLOB_PX:
+                continue
+            blob = labels == i
+            color = _warm_name(hsv, blob) if family == "warm" else family
+            if color in wanted:
+                out.append((color, blob, stats[i, cv2.CC_STAT_AREA]))
     return [(c, m) for c, m, _ in sorted(out, key=lambda b: -b[2])]
 
 

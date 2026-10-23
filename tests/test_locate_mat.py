@@ -90,3 +90,19 @@ def test_yellow_and_red_blocks_are_told_apart():
     red, yellow = block_mask(bgr, "red"), block_mask(bgr, "yellow")
     assert red[40, 40] and not red[140, 140]
     assert yellow[140, 140] and not yellow[40, 40]
+
+
+def test_red_and_orange_named_by_median_hue():
+    import cv2
+
+    from robotic_experiments.blocks.locate_mat import block_blobs
+
+    hsv = np.zeros((200, 300, 3), np.uint8)
+    hsv[...] = (11, 40, 150)  # light wood square: reddish but dull
+    hsv[20:80, 20:80] = (1, 210, 140)  # red cube
+    hsv[20:80, 120:180] = (6, 160, 160)  # orange cube
+    hsv[120:180, 120:180] = (85, 240, 120)  # green cube
+    hsv[120:180, 220:280] = (98, 250, 130)  # blue tape: must not count as green
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    found = {c: tuple(np.argwhere(m).mean(0).round()) for c, m in block_blobs(bgr, ["red", "orange", "green", "yellow"])}
+    assert found == {"red": (49.0, 49.0), "orange": (49.0, 149.0), "green": (149.0, 149.0)}
