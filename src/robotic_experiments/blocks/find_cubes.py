@@ -27,22 +27,26 @@ from robotic_experiments.connection import connect
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
 PHOTO_DIR = Path("runs/finds")
-# Telling shapes apart from the top face (mm) and the height above the mat (mm):
-#   cube 30x30 at 30, brick 60x30 at 30, cylinder 30 across at 60.
+# Telling shapes apart from the whole colored blob (top and visible sides, in mm on the mat) and
+# the height above the mat: cube 30x30 at 30, brick 60x30 at 30, cylinder 30 across at 60. The
+# blob does not depend on depth: the depth-based top face can come out cut short on a 60 mm brick
+# far from the camera, which once made a brick read as a cube. Visible sides add up to ~10 mm.
 FIND_HEIGHT_RANGE_MM = (18.0, 75.0)
 TALL_MM = 45.0  # taller than this: a cylinder
-LONG_MM = 45.0  # a top longer than this: a brick
+LONG_MM = 48.0  # a blob longer than this (and not tall): a brick
 MIN_SIDE_MM = 18.0  # narrower: a fragment (e.g. a shaded side face seen in another color)
-MAX_SIDE_MM = 80.0  # longer: not a block (a hand, an arm, ...)
+MAX_SIDE_MM = 90.0  # longer: not a block (a hand, an arm, ...)
+MAX_CYLINDER_WIDTH_MM = 48.0  # a tall blob wider than this both ways is not a cylinder
 
 
 def classify(size: tuple[float, float], height_mm: float) -> str | None:
-    """cube | brick | cylinder, or None for something that is not a whole block."""
+    """cube | brick | cylinder (from the blob's size and the height), or None for something
+    that is not a whole block."""
     short, long = sorted(size)
     if short < MIN_SIDE_MM or long > MAX_SIDE_MM:
         return None
     if height_mm > TALL_MM:
-        return "cylinder" if long <= LONG_MM else None
+        return "cylinder" if short <= MAX_CYLINDER_WIDTH_MM else None
     return "brick" if long > LONG_MM else "cube"
 
 
@@ -62,9 +66,10 @@ class Found:
     rotation_deg: float  # top face vs the mat lines, in (-45, 45]
     top_size_mm: tuple[float, float]  # top face sides, as a sanity check on the detection
     top_px: tuple[float, float]
-    shape: str = "cube"  # cube | brick | cylinder, from the top face's size and the height
+    shape: str = "cube"  # cube | brick | cylinder, from the blob's size and the height
     along: str = "files"  # bricks: which mat axis the long side is closer to
     height_mm: float = 30.0
+    blob_size_mm: tuple[float, float] | None = None  # the whole colored blob (top and sides): decides the shape
 
     def usable(self, ws: workspace.Workspace) -> str | None:
         """None if the arm can pick this cube up, otherwise why not."""
@@ -129,17 +134,24 @@ def locate(frame: Frame, ws: workspace.Workspace) -> list[Found]:
         if not FIND_HEIGHT_RANGE_MM[0] <= b.height_mm <= FIND_HEIGHT_RANGE_MM[1]:
             continue  # a mat square under warm light, a hand, ...: not a block
         f, r = to_mat @ (b.world[:2] - a1_view)
-        contours, _ = cv2.findContours(b.top_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        outline = max(contours, key=cv2.contourArea).reshape(-1, 1, 2).astype(np.float32)
-        on_mat = cv2.perspectiveTransform(outline, H).reshape(-1, 2) * sq
-        _, size = square_rotation(on_mat)  # outline: for the size and shape
-        shape = classify(size, b.height_mm)
+        top_on_mat = outline_on_mat(b.top_mask, H, sq)
+        blob_on_mat = outline_on_mat(b.blob_mask if b.blob_mask is not None else b.top_mask, H, sq)
+        _, size = square_rotation(top_on_mat)
+        _, blob_size = square_rotation(blob_on_mat)
+        shape = classify(blob_size, b.height_mm)
         if shape is None:
             continue
         rot = 0.0 if shape == "cylinder" else edge_rotation(gray, b.top_mask, local_jacobian(H, b.top_px))
-        along = long_axis(on_mat) if shape == "brick" else "files"
-        out.append(Found(b.color, float(f), float(r), rot, size, b.top_px, shape, along, b.height_mm))
+        along = long_axis(blob_on_mat) if shape == "brick" else "files"
+        out.append(Found(b.color, float(f), float(r), rot, size, b.top_px, shape, along, b.height_mm, blob_size))
     return sorted(merge_fragments(out, ws), key=lambda c: (round(c.r), round(c.f)))
+
+
+def outline_on_mat(mask: np.ndarray, H: np.ndarray, square_mm: float) -> np.ndarray:
+    """The largest outline in a mask, mapped to mat mm (u along files, v along ranks)."""
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    outline = max(contours, key=cv2.contourArea).reshape(-1, 1, 2).astype(np.float32)
+    return cv2.perspectiveTransform(outline, H).reshape(-1, 2) * square_mm
 
 
 def local_jacobian(H: np.ndarray, px: tuple[float, float]) -> np.ndarray:
@@ -154,11 +166,14 @@ def local_jacobian(H: np.ndarray, px: tuple[float, float]) -> np.ndarray:
 def merge_fragments(found: list[Found], ws: workspace.Workspace) -> list[Found]:
     """Drop detections that are not whole blocks (wrong size), and ones sitting on a bigger
     detection (e.g. a shaded side face picked up in another color)."""
-    whole = sorted((c for c in found if classify(c.top_size_mm, c.height_mm) is not None),
-                   key=lambda c: -c.top_size_mm[0] * c.top_size_mm[1])
+    def blob(c):
+        return c.blob_size_mm or c.top_size_mm
+
+    whole = sorted((c for c in found if classify(blob(c), c.height_mm) is not None),
+                   key=lambda c: -blob(c)[0] * blob(c)[1])
     kept: list[Found] = []
     for c in whole:
-        if all(math.dist((c.f, c.r), (k.f, k.r)) * ws.square_size_mm >= min(max(k.top_size_mm), ws.block_size_mm)
+        if all(math.dist((c.f, c.r), (k.f, k.r)) * ws.square_size_mm >= min(max(blob(k)), ws.block_size_mm)
                for k in kept):
             kept.append(c)
     return kept

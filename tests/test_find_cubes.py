@@ -97,3 +97,14 @@ def test_classify_shapes_by_top_and_height():
     assert classify((54, 122), 30) is None  # a hand
     pts = np.array([[x, y] for x in range(-30, 31, 5) for y in (-15, 15)], float)
     assert long_axis(pts) == "files" and long_axis(pts[:, ::-1]) == "ranks"
+
+
+def test_shape_comes_from_the_blob_not_a_clipped_top_face():
+    from robotic_experiments.blocks.find_cubes import classify
+
+    # a brick far away: depth noise clipped its top face to 23x19, but the blob is the whole brick
+    assert classify((27, 60), 22) == "brick"
+    # a cube's blob with its visible sides is still well under a brick's length
+    assert classify((34, 38), 25) == "cube"
+    # a tall blob as wide as a brick is not a cylinder
+    assert classify((55, 60), 55) is None

@@ -41,6 +41,7 @@ _SHAPES = [(7, 7), (7, 6), (6, 6), (7, 5), (6, 5), (7, 4), (5, 5), (6, 4), (7, 3
 PATTERNS = [p for a, b in _SHAPES for p in ((a, b), (b, a)) if a != b or p == (a, b)]
 PATTERNS = list(dict.fromkeys(sorted(PATTERNS, key=lambda p: -p[0] * p[1])))
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
+BODY_DEPTH_MM = 22.0  # a block's visible body: color pixels within this depth below its top (mat is ~30 below)
 TOP_FACE_TOLERANCE_MM = 6.0  # block pixels this close to the nearest block surface count as the top face
 
 # HSV ranges per block color, measured on the real cubes under the lab light. The mat's wood
@@ -349,6 +350,7 @@ class Block:
     top_mask: np.ndarray  # top-face pixels
     world: np.ndarray  # (3,) top-face center in `world`
     height_mm: float  # top face above the mat, as measured in this frame
+    blob_mask: np.ndarray | None = None  # every pixel of the block's color (top and visible sides)
 
     @property
     def cube_height(self) -> bool:
@@ -393,15 +395,18 @@ async def capture_frame(machine, colors=None) -> Frame:
         except LocateError:
             continue  # e.g. a blob at the image edge with no depth
         v, u = np.nonzero(top)
-        tops.append((color, (float(u.mean()), float(v.mean())), top, float(np.median(d[top]))))
-    block_cam = np.array([rays(np.array([p]), *intr)[0] * d for _, p, _, d in tops]).reshape(-1, 3)
+        # The block's body: its color, raised off the mat. Mat squares can fall in the warm color
+        # range from far away; they sit a whole block deeper than its top, sides do not.
+        body = mask & (depth > 0) & (depth <= np.nanpercentile(d, 5) + BODY_DEPTH_MM)
+        tops.append((color, (float(u.mean()), float(v.mean())), top, float(np.median(d[top])), body))
+    block_cam = np.array([rays(np.array([p]), *intr)[0] * d for _, p, _, d, _ in tops]).reshape(-1, 3)
 
     depths = np.array([sample_depth(depth, u, v) for u, v in px])
     on_plane = project_onto_plane(px, depths, intr)
     world = await to_world(machine, np.vstack([on_plane, block_cam]))
     lattice, blocks_w = world[: len(px)].reshape(rows, cols, 3), world[len(px):]
     mat_z = float(lattice[..., 2].mean())
-    blocks = [Block(c, p, m, w, float(w[2]) - mat_z) for (c, p, m, _), w in zip(tops, blocks_w)]
+    blocks = [Block(c, p, m, w, float(w[2]) - mat_z, full) for (c, p, m, _, full), w in zip(tops, blocks_w)]
     return Frame(bgr, corners, lattice, blocks)
 
 
