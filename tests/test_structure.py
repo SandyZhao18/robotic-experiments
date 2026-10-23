@@ -172,3 +172,23 @@ def test_build_plans_check_the_scene_after_the_safe_start():
     assert p.steps[0].label == "move to safe start"
     (rec,) = [s.record for s in p.steps if s.record is not None]
     assert rec.at == "a3" and rec.top_mm == 30.0
+
+
+def test_tall_structures_are_checked_from_the_find_pose():
+    from robotic_experiments.blocks import scene
+    from robotic_experiments.blocks.planner import LOOK_FROM_SAFE_START_MAX_MM, plan_structure
+
+    ws = _ws()
+    spec = [{"shape": "cylinder", "at": "a3"}, {"shape": "cylinder", "at": "b3"},
+            {"shape": "brick", "at": "a3|b3"}, {"at": "a3|b3"}, {"shape": "brick", "at": "a3|b3"}, {"at": "a3|b3", "level": 5}]
+    placed = solve(spec, ws.square_size_mm)
+    assert placed[5].top_mm == 180.0 and placed[4].supports == (3,)
+    existing = [scene.from_placed(p) for p in placed[:4]]  # the arch, top 120
+    pickups = [("x", (5.0 + k % 2 * 2, float(k))) for k in range(6)]  # only 4 and 5 are used
+    p = plan_structure(ws, placed, pickups, existing, start=4, check_scene=True)
+    first = [s for s in p.steps[:3]]
+    assert [s.kind for s in first] == ["move", "move", "check_scene"]
+    assert (first[1].target.x, first[1].target.y, first[1].target.z) == ws.find_pose
+    looks = [p.steps[i - 1].target.z for i, s in enumerate(p.steps) if s.kind == "verify_placed"]
+    assert looks == [ws.find_pose[2], ws.find_pose[2]]
+    assert 120.0 > LOOK_FROM_SAFE_START_MAX_MM

@@ -85,11 +85,12 @@ def plan_build(path: str, ws: workspace.Workspace, find: bool = False) -> Plan:
     if existing and len(existing) > start:
         print(f"{len(existing) - start} other block(s) in the scene record are obstacles.")
     if not find:
-        missing = [str(i) for i, b in enumerate(raw) if "from" not in b]
+        missing = [str(i) for i, b in enumerate(raw) if i >= start and "from" not in b]
         if missing:
             raise ValueError(f"blocks {', '.join(missing)} have no `from`: say which square each block is "
                              "picked up from, or use --find")
-        pickups = [(b["from"], structure.parse_at(b["from"])) for b in raw]
+        pickups = [(b["from"], structure.parse_at(b["from"])) if i >= start else ("built", (p.f, p.r))
+                   for i, (b, p) in enumerate(zip(raw, placed))]
         return plan_structure(ws, placed, pickups, existing, start, check_scene=True)
 
     found = [c for c in find_objects(ws)]

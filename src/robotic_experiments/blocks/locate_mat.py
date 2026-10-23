@@ -338,8 +338,8 @@ class Capture:
 # so the camera's mounting offset cancels). This rejects block-colored things that are not cubes:
 # mat squares under warm light (height ~0) and hands or arms reaching in (far higher).
 CUBE_HEIGHT_RANGE_MM = (18.0, 45.0)
-# Tops anywhere in a structure of up to ~5 cube heights (3 cubes plus a cylinder is 150 mm).
-STRUCTURE_HEIGHT_RANGE_MM = (18.0, 165.0)
+# Tops anywhere in a structure of up to ~7 cube heights.
+STRUCTURE_HEIGHT_RANGE_MM = (18.0, 220.0)
 
 
 @dataclass

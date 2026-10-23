@@ -1,0 +1,34 @@
+# The cylinder arch with a tower on top: 5 levels, 180 mm. The first four blocks are the
+# arch (arch_cylinders.toml), so building this after the arch resumes from the scene record.
+#            [cube]          level 5, top 180 mm
+#     [=====brick=====]      level 4, balanced on the cube below, top 150 mm
+#            [cube]          level 3, top 120 mm
+#     [=====brick=====]      level 2, top 90 mm
+#     (cyl)       (cyl)      level 1, top 60 mm
+[[block]]
+shape = "cylinder"
+at = "a3"
+
+[[block]]
+shape = "cylinder"
+at = "b3"
+
+[[block]]
+shape = "brick"
+at = "a3|b3"
+along = "files"
+level = 2
+
+[[block]]
+at = "a3|b3"
+level = 3
+
+[[block]]
+shape = "brick"
+at = "a3|b3"
+along = "files"
+level = 4
+
+[[block]]
+at = "a3|b3"
+level = 5

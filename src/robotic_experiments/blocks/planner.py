@@ -182,6 +182,16 @@ def _pickup_order(ws: Workspace, sources: list, loose: list[Loose], n: int, prob
 
 
 TRAVEL_CLEARANCE_MM = 20.0  # a carried block's bottom stays this far above everything on the mat
+# The depth camera needs ~300 mm to a surface; from the safe start it is ~460 mm above the mat, so
+# taller structures are looked at from the (higher) find pose instead.
+LOOK_FROM_SAFE_START_MAX_MM = 110.0
+
+
+def look_pose(ws: Workspace, top_mm: float) -> tuple[str, Target]:
+    """Where the camera looks from to check a structure whose tallest top is top_mm above the mat."""
+    if top_mm <= LOOK_FROM_SAFE_START_MAX_MM:
+        return "the safe start", Target(*ws.safe_start, ws.theta_deg)
+    return "the find pose (high, for a tall structure)", Target(*ws.find_pose, ws.theta_deg)
 
 
 def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[float, float]]],
@@ -260,7 +270,12 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
     assignments = tuple(assignments)
     steps = list(_pick_and_place_steps(ws, assignments))
     if check_scene:
-        steps.insert(1, Step("check_scene", "check the build area against the scene record"))
+        tallest = max([b.top_mm for b in existing], default=0.0)
+        check = [Step("check_scene", "check the build area against the scene record")]
+        if tallest > LOOK_FROM_SAFE_START_MAX_MM:
+            name, pose = look_pose(ws, tallest)
+            check.insert(0, Step("move", f"go to {name} to look", target=pose))
+        steps[1:1] = check
     return Plan(None, assignments, tuple(steps), tuple(placed))
 
 
@@ -328,7 +343,7 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
             Step("check_released", "close fingers to confirm the block was let go", b, record=a.record),
             Step("move", "retreat to travel height", b, at(a.cell_xy, travel)),
             # A block on top of others can still fall after a clean release: look before going on.
-            *([Step("move", "go to the safe start to look", b, Target(*ws.safe_start, ws.theta_deg)),
+            *([Step("move", f"go to {look_pose(ws, a.record.top_mm)[0]} to look", b, look_pose(ws, a.record.top_mm)[1]),
                Step("verify_placed", f"camera: the block on {a.cell_square} stayed on top", b, expect=a.record)]
               if stacked and a.record is not None else []),
         ]
