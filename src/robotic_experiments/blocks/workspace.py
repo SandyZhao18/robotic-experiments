@@ -57,8 +57,9 @@ class Workspace:
     pickup_squares: tuple[str, ...]  # used in this order
 
     block_size_mm: float
-    open_finger_span_mm: float  # outer width of the open fingers
+    open_finger_span_mm: float  # outer width of the open fingers (at open_position, if set)
     finger_clearance_mm: float  # extra gap required beside neighbouring blocks
+    open_position: float | None  # gripper position (0 closed .. ~850 fully open) for open/release; None = fully open
 
     grip_z: float  # gripper-frame z when the fingers are around a block on the mat
     approach_height_mm: float  # above grip_z, for approach and retreat
@@ -72,6 +73,11 @@ class Workspace:
 
     required_obstacles: tuple[str, ...]
     arrival_tolerance_mm: float
+
+    @property
+    def min_neighbour_spacing_mm(self) -> float:
+        """Closest two block centers may be so the open fingers clear a neighbour."""
+        return (self.block_size_mm + self.open_finger_span_mm) / 2 + self.finger_clearance_mm
 
     @property
     def mat_top_z(self) -> float:
@@ -168,7 +174,7 @@ class Workspace:
         except ValueError as e:
             return out + [f"build grid from {self.grid_top_left} with stride {self.grid_stride}: {e}"]
 
-        needed = (self.block_size_mm + self.open_finger_span_mm) / 2 + self.finger_clearance_mm
+        needed = self.min_neighbour_spacing_mm
         pitch = min(fp, rp) * self.grid_stride
         if pitch < needed:
             out.append(f"build grid pitch {pitch:.1f} mm is too tight: open fingers beside a placed block need {needed:.1f} mm")
@@ -210,6 +216,7 @@ def load(path: str | Path) -> Workspace:
         block_size_mm=float(d["block"]["size_mm"]),
         open_finger_span_mm=float(grip["open_finger_span_mm"]),
         finger_clearance_mm=float(grip["finger_clearance_mm"]),
+        open_position=float(grip["open_position"]) if "open_position" in grip else None,
         grip_z=float(grip["grip_z"]),
         approach_height_mm=float(grip["approach_height_mm"]),
         place_release_offset_mm=float(grip["place_release_offset_mm"]),

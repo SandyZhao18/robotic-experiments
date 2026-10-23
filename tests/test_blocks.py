@@ -4,7 +4,7 @@ import pytest
 
 from robotic_experiments.blocks import workspace
 from robotic_experiments.blocks.design import Design
-from robotic_experiments.blocks.planner import PlanError, plan
+from robotic_experiments.blocks.planner import PlanError, plan, plan_transfer
 
 WS = workspace.load("tests/workspace_fixture.toml")
 
@@ -119,3 +119,21 @@ def test_placement_offset_shifts_targets_not_measurements():
     mx, my = ws.measured_square_xy("e5")
     x, y = ws.square_xy("e5")
     assert (x - mx, y - my) == pytest.approx((10 * ws.rank_unit[0], 10 * ws.rank_unit[1]))
+
+
+def test_transfer_refuses_adjacent_squares_with_fully_open_fingers():
+    # fixture: open span 100 mm -> neighbours need 75 mm; adjacent squares are 57 mm apart
+    with pytest.raises(PlanError, match="open fingers need"):
+        plan_transfer(WS, [("a1", "a3"), ("c1", "a4")])
+
+
+def test_transfer_allows_adjacent_squares_with_partly_open_fingers():
+    ws = dataclasses.replace(WS, open_position=400.0, open_finger_span_mm=65.0, finger_clearance_mm=8.0)
+    p = plan_transfer(ws, [("a1", "a3"), ("c1", "a4")])
+    assert [a.cell_square for a in p.assignments] == ["a3", "a4"]
+
+
+def test_transfer_refuses_dropping_next_to_a_waiting_block():
+    ws = dataclasses.replace(WS, open_position=400.0, open_finger_span_mm=65.0, finger_clearance_mm=30.0)
+    with pytest.raises(PlanError, match="block on c1"):
+        plan_transfer(ws, [("a1", "b1"), ("c1", "c3")])

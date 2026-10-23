@@ -8,11 +8,12 @@
 """
 
 import argparse
+import dataclasses
 import sys
 
 from robotic_experiments.blocks import workspace
 from robotic_experiments.blocks.design import PRESETS, Design
-from robotic_experiments.blocks.planner import Plan, PlanError, plan, plan_goto, plan_hover, plan_transfer
+from robotic_experiments.blocks.planner import Plan, PlanError, plan, plan_goto, plan_hover, plan_open_gripper, plan_transfer
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
 DEFAULT_HOVER_Z = 150.0
@@ -24,12 +25,21 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--grid", help='pattern rows separated by "|", e.g. "#..|#..|###"')
     group.add_argument("--transfer", nargs="+", metavar="SQUARE", help="FROM TO pairs, e.g. a1 a3 or a1 e3 c1 a7")
     group.add_argument("--hover", metavar="SQUARE", help="go above a square and stop, for measuring")
+    group.add_argument("--open-gripper", action="store_true", help="only open the fingers to the configured position")
     group.add_argument("--goto", nargs=3, type=float, metavar=("X", "Y", "Z"), help="move the gripper to a point, e.g. to aim the camera")
+    parser.add_argument("--grid-top-left", metavar="SQUARE", help="override the build grid's top-left square")
+    parser.add_argument("--grid-stride", type=int, help="override squares between design cells (1 = adjacent)")
     parser.add_argument("--hover-z", type=float, default=DEFAULT_HOVER_Z, help="gripper z for --hover (default: %(default)s)")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
 
 
 def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
+    if args.grid_top_left or args.grid_stride:
+        ws = dataclasses.replace(
+            ws,
+            grid_top_left=args.grid_top_left or ws.grid_top_left,
+            grid_stride=args.grid_stride or ws.grid_stride,
+        )
     if args.transfer:
         if len(args.transfer) % 2:
             raise ValueError("--transfer takes FROM TO pairs")
@@ -38,6 +48,8 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
         return plan_transfer(ws, list(zip(args.transfer[::2], args.transfer[1::2])))
     if args.goto:
         return plan_goto(ws, *args.goto)
+    if args.open_gripper:
+        return plan_open_gripper()
     if args.hover:
         workspace.parse_square(args.hover)
         return plan_hover(ws, args.hover, args.hover_z)

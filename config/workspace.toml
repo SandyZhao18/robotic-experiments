@@ -43,8 +43,12 @@ squares = ["a1", "c1", "e1", "g1", "g3"]
 size_mm = 30.0                   # red cube, 30 x 30 x 30
 
 [gripper]
-open_finger_span_mm = 100.0      # outer width across the open fingers
-finger_clearance_mm = 10.0       # extra margin beside neighbouring blocks
+# Fully open (position 840) measured: inner gap 92 mm, outer span 113 mm (fingers ~10.5 mm each);
+# closed is ~-5, so ~0.109 mm of gap per unit if linear. Open only part way so blocks can go on
+# adjacent squares: position 400 -> ~44 mm gap (7 mm each side of a 30 mm cube), ~65 mm span.
+open_position = 400.0            # ESTIMATE until measured at 400
+open_finger_span_mm = 65.0       # outer width across the fingers at open_position
+finger_clearance_mm = 8.0        # extra margin beside neighbouring blocks -> 55.5 mm minimum spacing
 grip_z = 73.3                    # hover test: gripper z 150.3 with fingertips 82 mm above the mat
                                  # -> fingertips 5 mm above the mat = 150.3 - 82 + 5
 approach_height_mm = 60.0        # above grip_z

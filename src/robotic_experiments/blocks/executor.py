@@ -108,7 +108,10 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
         if err > ws.arrival_tolerance_mm:
             raise Abort(f"{s.label}: ended {err:.1f} mm from target (tolerance {ws.arrival_tolerance_mm} mm)")
     elif s.kind in ("open", "release"):
-        await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
+        if ws.open_position is None:
+            await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
+        else:
+            await bounded(open_partly(gripper, ws.open_position), grip_timeout + 5, s.label)
     elif s.kind == "grab":
         grabbed = await bounded(gripper.grab(timeout=grip_timeout), grip_timeout + 5, s.label)
         holding = await bounded(gripper.is_holding_something(), 10, "checking grasp")
@@ -116,6 +119,19 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
             raise Abort(f"grasp failed (grab={grabbed}, holding={holding.is_holding_something}, meta={holding.meta})")
     else:
         raise Abort(f"unknown step kind {s.kind!r}")
+
+
+GRIPPER_POSITION_TOLERANCE = 20.0  # gripper units (~2 mm)
+
+
+async def open_partly(gripper, position: float) -> None:
+    """Open to `position` with the module's DoCommand and wait until the fingers get there."""
+    await gripper.do_command({"set": float(position)})
+    while True:
+        pos = (await gripper.do_command({"get": True}))["pos"]
+        if abs(pos - position) <= GRIPPER_POSITION_TOLERANCE:
+            return
+        await asyncio.sleep(0.1)
 
 
 async def emergency_stop(machine) -> None:
@@ -183,7 +199,9 @@ def main() -> None:
 
     print(describe(p, ws))
     print()
-    if args.hover or args.goto:
+    if args.open_gripper:
+        pass  # fingers only; nothing near the mat moves
+    elif args.hover or args.goto:
         z = args.goto[2] if args.goto else args.hover_z
         if z < ws.mat_top_z + MIN_UNCALIBRATED_HOVER_MM and not ws.calibrated:
             sys.exit(f"Refusing: uncalibrated moves must stay at z >= {ws.mat_top_z + MIN_UNCALIBRATED_HOVER_MM:.0f}.")

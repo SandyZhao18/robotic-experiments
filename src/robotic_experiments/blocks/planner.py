@@ -1,5 +1,6 @@
 """Deterministic construction planner: design + workspace -> list of steps. No robot access."""
 
+import math
 from dataclasses import dataclass
 
 from robotic_experiments.blocks.design import Design
@@ -79,6 +80,16 @@ def plan_transfer(ws: Workspace, moves: list[tuple[str, str]]) -> Plan:
             problems.append(f"move {i}: {src} or {dst} is already used by an earlier move")
         if dst in [s for s, _ in moves[i + 1:]]:
             problems.append(f"move {i}: {dst} still holds a block that a later move picks up")
+    # Every placed block, and every block still waiting, must clear the open fingers at each drop.
+    for i, (_, dst) in enumerate(moves):
+        neighbours = [d for _, d in moves[:i]] + [s for s, _ in moves[i + 1:]]
+        for n in neighbours:
+            gap = math.dist(ws.measured_square_xy(dst), ws.measured_square_xy(n))
+            if gap < ws.min_neighbour_spacing_mm:
+                problems.append(
+                    f"move {i}: {dst} is {gap:.0f} mm from the block on {n}; open fingers need "
+                    f"{ws.min_neighbour_spacing_mm:.0f} mm (set a smaller gripper open_position?)"
+                )
     if problems:
         raise PlanError("; ".join(problems))
     assignments = tuple(
@@ -100,6 +111,11 @@ def plan_hover(ws: Workspace, square: str, z: float) -> Plan:
     )
     _check_bounds(ws, steps)
     return Plan(None, (), steps)
+
+
+def plan_open_gripper() -> Plan:
+    """Only open the fingers (to the configured open_position), e.g. to measure the gap."""
+    return Plan(None, (), (Step("open", "open fingers to the configured position"),))
 
 
 def plan_goto(ws: Workspace, x: float, y: float, z: float) -> Plan:
