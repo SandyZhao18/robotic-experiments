@@ -121,6 +121,7 @@ uv run placement-report
 | Finger rubber taped, adjacent pair a3–a4 (18–19) | released cleanly; neighbour moved 0.2 mm |
 | **Adjacent L**, one cube per run (20–24) | all five placed, none nudged; 5–9 mm off, consistently +6.4 mm along ranks |
 | Offset refit for the taped finger (`--offset-only`) | predicted residuals within ±1.6 mm along ranks |
+| **Adjacent L in a single run**, pickups a1–e1 (25–29) | 72 steps, no stops; ranks −1.3 to +2.8 mm, worst 6.6 mm (files offset carried from hand placement) |
 
 ### Known issues
 
