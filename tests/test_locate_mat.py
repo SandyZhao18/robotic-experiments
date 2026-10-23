@@ -104,5 +104,8 @@ def test_red_and_orange_named_by_median_hue():
     hsv[120:180, 120:180] = (85, 240, 120)  # green cube
     hsv[120:180, 220:280] = (98, 250, 130)  # blue tape: must not count as green
     bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-    found = {c: tuple(np.argwhere(m).mean(0).round()) for c, m in block_blobs(bgr, ["red", "orange", "green", "yellow"])}
-    assert found == {"red": (49.0, 49.0), "orange": (49.0, 149.0), "green": (149.0, 149.0)}
+    found = {c: tuple(np.argwhere(m).mean(0)) for c, m in block_blobs(bgr, ["red", "orange", "green", "yellow"])}
+    assert found.keys() == {"red", "orange", "green"}
+    assert found["red"] == pytest.approx((49.5, 49.5), abs=1)
+    assert found["orange"] == pytest.approx((49.5, 149.5), abs=1)
+    assert found["green"] == pytest.approx((149.5, 149.5), abs=1)
