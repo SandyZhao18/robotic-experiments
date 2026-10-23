@@ -1,5 +1,6 @@
 """Find every cube on the mat with the camera. Read-only: never moves the robot.
 
+    uv run blocks-run --goto 314 -392 600 --approved   # the [find] pose: camera sees the whole board
     uv run find-cubes
 
 Each cube is located against the chessboard squares in the same photo (like check-placement),
@@ -26,6 +27,7 @@ from robotic_experiments.connection import connect
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
 PHOTO_DIR = Path("runs/finds")
+MAX_ROTATION_DEG = 20.0  # parallel fingers square up a cube twisted this much as they close
 
 
 @dataclass
@@ -36,6 +38,19 @@ class Found:
     rotation_deg: float  # top face vs the mat lines, in (-45, 45]
     top_size_mm: tuple[float, float]  # top face sides, as a sanity check on the detection
     top_px: tuple[float, float]
+
+    def usable(self, ws: workspace.Workspace) -> str | None:
+        """None if the arm can pick this cube up, otherwise why not."""
+        sq = self.square
+        if sq is None:
+            return "off the mat"
+        if sq[0] not in ws.supply_files:
+            return f"not in the supply files ({ws.supply_files})"
+        if math.hypot(*ws.xy_at(self.f, self.r)) > ws.max_reach_mm:
+            return f"out of reach (> {ws.max_reach_mm:.0f} mm)"
+        if abs(self.rotation_deg) > MAX_ROTATION_DEG:
+            return f"twisted {self.rotation_deg:+.0f} deg (straighten to within {MAX_ROTATION_DEG:.0f})"
+        return None
 
     @property
     def square(self) -> str | None:
@@ -107,11 +122,12 @@ def main() -> None:
     path = PHOTO_DIR / f"find_{datetime.now():%Y-%m-%d_%H%M%S}_{len(found)}-cubes.jpg"
     cv2.imwrite(str(path), photo)
     print(f"{len(found)} cube(s) in view:")
-    print(f"  {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  top face mm")
+    print(f"  {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  {'top face':>9s}  pickable?")
     for c in found:
         df, dr = c.offset_mm(ws.square_size_mm)
         w, h = c.top_size_mm
-        print(f"  {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  {w:.0f} x {h:.0f}")
+        why = c.usable(ws)
+        print(f"  {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  {w:3.0f} x {h:3.0f}  {'yes' if why is None else 'no: ' + why}")
     print(f"Photo: {path}")
 
 

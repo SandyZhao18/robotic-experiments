@@ -23,3 +23,17 @@ def test_found_reports_nearest_square_and_offset():
     assert c.square == "a3"
     assert c.offset_mm(57.0) == pytest.approx((2.85, 5.7))
     assert Found("red", -0.8, 0.0, 0.0, (30, 30), (0, 0)).square is None
+
+
+def test_usable_checks_supply_area_reach_and_twist():
+    import dataclasses
+
+    from robotic_experiments.blocks import workspace
+
+    ws = dataclasses.replace(workspace.load("tests/workspace_fixture.toml"), supply_files="fgh", max_reach_mm=10_000.0)
+    ok = Found("red", f=6.0, r=1.0, rotation_deg=5.0, top_size_mm=(30, 30), top_px=(0, 0))  # g2
+    assert ok.usable(ws) is None
+    assert "supply" in Found("red", 2.0, 1.0, 0.0, (30, 30), (0, 0)).usable(ws)  # c2
+    assert "twisted" in Found("red", 6.0, 1.0, 35.0, (30, 30), (0, 0)).usable(ws)
+    assert "reach" in ok.usable(dataclasses.replace(ws, max_reach_mm=100.0))
+    assert "off the mat" in Found("red", 8.6, 1.0, 0.0, (30, 30), (0, 0)).usable(ws)

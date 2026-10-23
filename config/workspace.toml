@@ -42,6 +42,12 @@ stride = 2                       # 2 = every other square, leaves room for the o
 # One block per square, used in this order. Must be outside the build grid and well spaced.
 squares = ["a1", "c1", "e1", "g1", "g3"]
 
+[find]
+# Loose cubes are found by the camera in the supply files and built into files a-e.
+supply_files = "fgh"
+pose = [314.0, -392.0, 600.0]    # gripper here -> the camera sees the whole board (same as locate-mat)
+max_reach_mm = 700.0             # farthest pickup so far: g3 at 651 mm
+
 [block]
 size_mm = 30.0                   # red cube, 30 x 30 x 30
 

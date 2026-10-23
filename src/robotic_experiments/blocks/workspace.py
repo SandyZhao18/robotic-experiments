@@ -55,6 +55,9 @@ class Workspace:
     grid_top_left: str  # square under design cell (row 0, col 0)
     grid_stride: int  # squares between neighbouring design cells
     pickup_squares: tuple[str, ...]  # used in this order
+    supply_files: str  # files where loose cubes are found by the camera, e.g. "fgh"
+    find_pose: tuple[float, float, float]  # gripper position from which the camera sees the supply area
+    max_reach_mm: float  # pickups farther than this from the arm's base are refused
 
     block_size_mm: float
     open_finger_span_mm: float  # outer width of the fingers when releasing (at open_position, if set)
@@ -120,28 +123,42 @@ class Workspace:
         n = math.hypot(*self.rank_step)
         return (self.rank_step[0] / n, self.rank_step[1] / n)
 
-    def measured_square_xy(self, name: str) -> Vec2:
-        """Square center as the camera measured it."""
-        f, r = parse_square(name)
+    def measured_xy_at(self, f: float, r: float) -> Vec2:
+        """Mat coordinates (square (F, R) centered at whole numbers, a1 = (0, 0)) to `world` x/y."""
         fs, rs = self.file_step, self.rank_step
         return (self.a1[0] + f * fs[0] + r * rs[0], self.a1[1] + f * fs[1] + r * rs[1])
 
+    def measured_square_xy(self, name: str) -> Vec2:
+        """Square center as the camera measured it."""
+        return self.measured_xy_at(*parse_square(name))
+
+    def uv_at(self, f: float, r: float) -> Vec2:
+        """Mat coordinates to mm from a1's center, along (files, ranks)."""
+        return (f * math.hypot(*self.file_step), r * math.hypot(*self.rank_step))
+
     def square_uv(self, name: str) -> Vec2:
         """Measured center of a square in mm from a1's center, along (files, ranks)."""
-        f, r = parse_square(name)
-        return (f * math.hypot(*self.file_step), r * math.hypot(*self.rank_step))
+        return self.uv_at(*parse_square(name))
 
     def correction_at(self, name: str) -> Vec2:
         """Placement correction at a square, in mm along (files, ranks)."""
-        u, v = self.square_uv(name)
+        return self.correction_at_fr(*parse_square(name))
+
+    def correction_at_fr(self, f: float, r: float) -> Vec2:
+        """Placement correction at mat coordinates (f, r), in mm along (files, ranks)."""
+        u, v = self.uv_at(f, r)
         (gff, gfr), (grf, grr) = self.placement_gradient
         of, orank = self.placement_offset_mm
         return (of + gff * u + gfr * v, orank + grf * u + grr * v)
 
     def square_xy(self, name: str) -> Vec2:
         """Where to send the gripper for this square: measured center plus the placement correction."""
-        x, y = self.measured_square_xy(name)
-        cf, cr = self.correction_at(name)
+        return self.xy_at(*parse_square(name))
+
+    def xy_at(self, f: float, r: float) -> Vec2:
+        """Where to send the gripper for mat coordinates (f, r), correction included."""
+        x, y = self.measured_xy_at(f, r)
+        cf, cr = self.correction_at_fr(f, r)
         fu, ru = self.file_unit, self.rank_unit
         return (x + cf * fu[0] + cr * ru[0], y + cf * fu[1] + cr * ru[1])
 
@@ -230,6 +247,9 @@ def load(path: str | Path) -> Workspace:
         grid_top_left=g["top_left"],
         grid_stride=int(g["stride"]),
         pickup_squares=pickups,
+        supply_files=d.get("find", {}).get("supply_files", "fgh"),
+        find_pose=tuple(d.get("find", {}).get("pose", (314.0, -392.0, 600.0))),
+        max_reach_mm=float(d.get("find", {}).get("max_reach_mm", 700.0)),
         block_size_mm=float(d["block"]["size_mm"]),
         open_finger_span_mm=float(grip["open_finger_span_mm"]),
         finger_clearance_mm=float(grip["finger_clearance_mm"]),
