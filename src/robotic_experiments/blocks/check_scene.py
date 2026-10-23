@@ -85,12 +85,12 @@ def updated(recorded: list[scene.SceneBlock], report: Report) -> list[scene.Scen
 
 
 def synced(seen: list[Seen], ws: workspace.Workspace) -> list[scene.SceneBlock]:
-    """A record built from the camera alone: each top becomes a cube column up to its height."""
+    """A record built from the camera alone: each top becomes a cube-sized column from the mat up
+    to its height (the camera cannot see what is underneath, so assume it is solid)."""
     out = []
     for s in seen:
         level = max(1, round(s.top_mm / ws.block_size_mm))
-        out.append(scene.SceneBlock("cube", "", "files", s.f, s.r, s.top_mm - ws.block_size_mm, s.top_mm,
-                                    level, measured=True, color=s.color))
+        out.append(scene.SceneBlock("cube", "", "files", s.f, s.r, 0.0, s.top_mm, level, measured=True, color=s.color))
     return out
 
 

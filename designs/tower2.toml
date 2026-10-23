@@ -1,0 +1,9 @@
+# Two cubes stacked on a3 (then run tower3.toml to add the third: it resumes from the scene).
+[[block]]
+at = "a3"
+from = "f1"
+
+[[block]]
+at = "a3"
+from = "g1"
+level = 2
