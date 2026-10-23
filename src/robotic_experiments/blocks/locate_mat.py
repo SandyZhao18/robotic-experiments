@@ -36,7 +36,10 @@ CAMERA = "cam"
 FRAME = "world"
 OUT_JSON = Path("config/mat_calibration.json")
 OUT_IMAGE = Path("config/mat_calibration.jpg")
-PATTERNS = [(7, 7), (7, 6), (6, 7), (7, 5), (5, 7), (6, 6), (6, 5), (5, 6), (5, 5), (6, 4), (4, 6), (5, 4), (4, 5), (4, 4)]
+# Inner-corner grids to look for, largest first. Narrow ones (7x3) cover close-up views of a strip of the mat.
+_SHAPES = [(7, 7), (7, 6), (6, 6), (7, 5), (6, 5), (7, 4), (5, 5), (6, 4), (7, 3), (5, 4), (6, 3), (4, 4)]
+PATTERNS = [p for a, b in _SHAPES for p in ((a, b), (b, a)) if a != b or p == (a, b)]
+PATTERNS = list(dict.fromkeys(sorted(PATTERNS, key=lambda p: -p[0] * p[1])))
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
 DEPTH_DISAGREEMENT_WARN_MM = 10.0
 SQUARE_SIZE_TOLERANCE_MM = 1.5
