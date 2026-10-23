@@ -50,7 +50,7 @@ class PlanError(ValueError):
     pass
 
 
-def plan(design: Design, ws: Workspace) -> Plan:
+def plan(design: Design, ws: Workspace, recenter: bool = False) -> Plan:
     """Build a 3x3 design: fill cells row by row from pickup squares in order."""
     problems = ws.problems()
     if problems:
@@ -67,10 +67,12 @@ def plan(design: Design, ws: Workspace) -> Plan:
         Assignment(i, i, ws.pickup_squares[i], ws.pickups[i], cell, ws.cell_square(*cell), ws.cell_xy(*cell))
         for i, cell in enumerate(filled)
     )
-    return Plan(design, assignments, _pick_and_place_steps(ws, assignments))
+    if recenter:
+        _check_recenter_square(ws, list(ws.pickup_squares[: len(filled)]) + [a.cell_square for a in assignments])
+    return Plan(design, assignments, _pick_and_place_steps(ws, assignments, recenter))
 
 
-def plan_transfer(ws: Workspace, moves: list[tuple[str, str]]) -> Plan:
+def plan_transfer(ws: Workspace, moves: list[tuple[str, str]], recenter: bool = False) -> Plan:
     """Move blocks between mat squares, in order, ignoring the build grid."""
     problems = ws.mat_problems()
     for i, (src, dst) in enumerate(moves):
@@ -93,7 +95,21 @@ def plan_transfer(ws: Workspace, moves: list[tuple[str, str]]) -> Plan:
     assignments = tuple(
         Assignment(i, i, src, ws.square_xy(src), None, dst, ws.square_xy(dst)) for i, (src, dst) in enumerate(moves)
     )
-    return Plan(None, assignments, _pick_and_place_steps(ws, assignments))
+    if recenter:
+        _check_recenter_square(ws, [sq for move in moves for sq in move])
+    return Plan(None, assignments, _pick_and_place_steps(ws, assignments, recenter))
+
+
+def _check_recenter_square(ws: Workspace, used: list[str]) -> None:
+    """The wrist turns 90 degrees with open fingers on the re-centering square: keep everything clear."""
+    sq = ws.recenter_square
+    if sq is None:
+        raise PlanError("--recenter needs [pickups] recenter_square in the workspace")
+    need = ws.turning_clearance_mm()
+    close = [f"{u} ({math.dist(ws.measured_square_xy(sq), ws.measured_square_xy(u)):.0f} mm)" for u in dict.fromkeys(used)
+             if math.dist(ws.measured_square_xy(sq), ws.measured_square_xy(u)) < need]
+    if close:
+        raise PlanError(f"re-centering square {sq} must be {need:.0f} mm from every block; too close: {', '.join(close)}")
 
 
 def plan_hover(ws: Workspace, square: str, z: float) -> Plan:
@@ -123,7 +139,47 @@ def plan_goto(ws: Workspace, x: float, y: float, z: float) -> Plan:
     return Plan(None, (), steps)
 
 
-def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
+def turned(theta: float) -> float:
+    """theta + 90 degrees, normalised to (-180, 180]."""
+    t = (theta + 90.0) % 360.0
+    return t - 360.0 if t > 180.0 else t
+
+
+def _recenter_steps(ws: Workspace, b: int) -> list[Step]:
+    """Let the block go on the re-centering square, grab it once with the wrist turned 90 degrees
+    (centering it along the other axis), then grab it again at the normal angle."""
+    xy = ws.square_xy(ws.recenter_square)
+    sq = ws.recenter_square
+    above = ws.grip_z + ws.approach_height_mm
+    t0, t1 = ws.theta_deg, turned(ws.theta_deg)
+
+    def at(z, theta):
+        return Target(xy[0], xy[1], z, theta)
+
+    return [
+        Step("move", f"travel above re-centering square {sq}", b, at(ws.travel_z, t0)),
+        Step("move", f"approach {sq}", b, at(above, t0)),
+        Step("move", f"lower block onto {sq}", b, at(ws.grip_z + ws.place_release_offset_mm, t0)),
+        Step("open", "let go (fully open)", b),
+        Step("move", "rise to approach height", b, at(above, t0)),
+        Step("check_released", "close fingers to confirm the block was let go", b),
+        Step("move", "turn the wrist 90 degrees", b, at(above, t1)),
+        Step("open", "open fingers", b),
+        Step("move", "descend to grip, turned", b, at(ws.grip_z, t1)),
+        Step("grab", "close fingers: centers the block along the other axis", b),
+        Step("open", "let go (fully open)", b),
+        Step("move", "rise to approach height", b, at(above, t1)),
+        Step("check_released", "close fingers to confirm the block was let go", b),
+        Step("move", "turn the wrist back", b, at(above, t0)),
+        Step("open", "open fingers", b),
+        Step("move", f"descend to grip at {sq}", b, at(ws.grip_z, t0)),
+        Step("grab", "close fingers and verify grasp", b),
+        Step("move", "lift to approach height", b, at(above, t0)),
+        Step("move", "lift to travel height", b, at(ws.travel_z, t0)),
+    ]
+
+
+def _pick_and_place_steps(ws: Workspace, assignments, recenter: bool = False) -> tuple[Step, ...]:
     def at(xy, z):
         return Target(xy[0], xy[1], z, ws.theta_deg)
 
@@ -144,6 +200,7 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
             Step("grab", "close fingers and verify grasp", b),
             Step("move", "lift to approach height", b, at(a.pickup_xy, above)),
             Step("move", "lift to travel height", b, at(a.pickup_xy, ws.travel_z)),
+            *(_recenter_steps(ws, b) if recenter else []),
             Step("move", f"travel above {dst}", b, at(a.cell_xy, ws.travel_z)),
             Step("move", f"approach {dst}", b, at(a.cell_xy, above)),
             Step("move", f"lower block onto {dst}", b, at(a.cell_xy, release_z)),

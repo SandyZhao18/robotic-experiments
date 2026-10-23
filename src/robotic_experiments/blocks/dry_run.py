@@ -29,6 +29,8 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--goto", nargs=3, type=float, metavar=("X", "Y", "Z"), help="move the gripper to a point, e.g. to aim the camera")
     parser.add_argument("--grid-top-left", metavar="SQUARE", help="override the build grid's top-left square")
     parser.add_argument("--grid-stride", type=int, help="override squares between design cells (1 = adjacent)")
+    parser.add_argument("--recenter", action="store_true",
+                        help="re-grasp each block at 90 degrees on the re-centering square before placing it")
     parser.add_argument("--pickups", nargs="+", metavar="SQUARE", help="override the pickup squares, in order")
     parser.add_argument("--hover-z", type=float, default=DEFAULT_HOVER_Z, help="gripper z for --hover (default: %(default)s)")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
@@ -49,7 +51,7 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
             raise ValueError("--transfer takes FROM TO pairs")
         for sq in args.transfer:
             workspace.parse_square(sq)
-        return plan_transfer(ws, list(zip(args.transfer[::2], args.transfer[1::2])))
+        return plan_transfer(ws, list(zip(args.transfer[::2], args.transfer[1::2])), args.recenter)
     if args.goto:
         return plan_goto(ws, *args.goto)
     if args.open_gripper:
@@ -57,7 +59,7 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
     if args.hover:
         workspace.parse_square(args.hover)
         return plan_hover(ws, args.hover, args.hover_z)
-    return plan(Design.preset(args.preset) if args.preset else Design.parse(args.grid), ws)
+    return plan(Design.preset(args.preset) if args.preset else Design.parse(args.grid), ws, args.recenter)
 
 
 def describe(p: Plan, ws: workspace.Workspace) -> str:
