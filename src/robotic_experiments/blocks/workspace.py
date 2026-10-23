@@ -100,7 +100,11 @@ class Workspace:
         return tuple(self.square_xy(s) for s in self.pickup_squares)
 
     def problems(self) -> list[str]:
-        """Static checks on the measurements themselves (independent of any design)."""
+        """All static checks: the mat and heights, plus the build grid and pickup layout."""
+        return self.mat_problems() + self.layout_problems()
+
+    def mat_problems(self) -> list[str]:
+        """Checks needed for any move on the mat: recorded corners and heights."""
         out = []
         fp, rp = math.hypot(*self.file_step), math.hypot(*self.rank_step)
         if fp == 0 or rp == 0:
@@ -111,7 +115,18 @@ class Workspace:
         cos = (self.file_step[0] * self.rank_step[0] + self.file_step[1] * self.rank_step[1]) / (fp * rp)
         if abs(cos) > math.sin(math.radians(2)):
             out.append(f"files and ranks are {math.degrees(math.acos(cos)):.1f}° apart, expected 90° — are h1 and a8 swapped?")
+        if self.grip_z <= self.mat_top_z:
+            out.append(f"grip_z {self.grip_z} is at or below the mat surface (z = {self.mat_top_z})")
+        if self.travel_z < self.grip_z + self.approach_height_mm:
+            out.append("travel_z must be at or above grip_z + approach_height_mm")
+        if self.approach_height_mm < self.block_size_mm:
+            out.append("approach_height_mm should be at least one block height so a held block clears its neighbours")
+        return out
 
+    def layout_problems(self) -> list[str]:
+        """Checks on the 3x3 build grid and pickup squares."""
+        out = []
+        fp, rp = math.hypot(*self.file_step), math.hypot(*self.rank_step)
         try:
             cells = {self.cell_square(r, c) for r in range(3) for c in range(3)}
         except ValueError as e:
@@ -132,13 +147,6 @@ class Workspace:
                 if math.dist(p, q) < needed:
                     out.append(f"pickup {i} ({s}) is {math.dist(p, q):.1f} mm from {label}, need {needed:.1f} mm")
             named.append((f"pickup {i} ({s})", p))
-
-        if self.grip_z <= self.mat_top_z:
-            out.append(f"grip_z {self.grip_z} is at or below the mat surface (z = {self.mat_top_z})")
-        if self.travel_z < self.grip_z + self.approach_height_mm:
-            out.append("travel_z must be at or above grip_z + approach_height_mm")
-        if self.approach_height_mm < self.block_size_mm:
-            out.append("approach_height_mm should be at least one block height so a held block clears its neighbours")
         return out
 
 

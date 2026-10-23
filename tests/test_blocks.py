@@ -6,7 +6,7 @@ from robotic_experiments.blocks import workspace
 from robotic_experiments.blocks.design import Design
 from robotic_experiments.blocks.planner import PlanError, plan
 
-WS = workspace.load("config/workspace.toml")
+WS = workspace.load("tests/workspace_fixture.toml")
 
 
 def test_parse_matches_render():

@@ -33,14 +33,14 @@ class Assignment:
     pickup_index: int
     pickup_square: str
     pickup_xy: tuple[float, float]
-    cell: tuple[int, int]
+    cell: tuple[int, int] | None  # design cell, None for a plain square-to-square transfer
     cell_square: str
     cell_xy: tuple[float, float]
 
 
 @dataclass(frozen=True)
 class Plan:
-    design: Design
+    design: Design | None
     assignments: tuple[Assignment, ...]
     steps: tuple[Step, ...]
 
@@ -50,6 +50,7 @@ class PlanError(ValueError):
 
 
 def plan(design: Design, ws: Workspace) -> Plan:
+    """Build a 3x3 design: fill cells row by row from pickup squares in order."""
     problems = ws.problems()
     if problems:
         raise PlanError("; ".join(problems))
@@ -65,7 +66,36 @@ def plan(design: Design, ws: Workspace) -> Plan:
         Assignment(i, i, ws.pickup_squares[i], ws.pickups[i], cell, ws.cell_square(*cell), ws.cell_xy(*cell))
         for i, cell in enumerate(filled)
     )
+    return Plan(design, assignments, _pick_and_place_steps(ws, assignments))
 
+
+def plan_transfer(ws: Workspace, src: str, dst: str) -> Plan:
+    """Move one block from one mat square to another, ignoring the build grid."""
+    problems = ws.mat_problems()
+    if src == dst:
+        problems.append("source and destination are the same square")
+    if problems:
+        raise PlanError("; ".join(problems))
+    a = Assignment(0, 0, src, ws.square_xy(src), None, dst, ws.square_xy(dst))
+    return Plan(None, (a,), _pick_and_place_steps(ws, (a,)))
+
+
+def plan_hover(ws: Workspace, square: str, z: float) -> Plan:
+    """Go above a square and stop there, for measuring the fingertip gap and finger alignment."""
+    problems = ws.mat_problems()
+    if problems:
+        raise PlanError("; ".join(problems))
+    xy = ws.square_xy(square)
+    steps = (
+        Step("move", "move to safe start", target=Target(*ws.safe_start, ws.theta_deg)),
+        Step("move", f"travel above {square}", target=Target(*xy, max(z, ws.travel_z), ws.theta_deg)),
+        Step("move", f"hover above {square} at z={z:.0f}", target=Target(*xy, z, ws.theta_deg)),
+    )
+    _check_bounds(ws, steps)
+    return Plan(None, (), steps)
+
+
+def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
     def at(xy, z):
         return Target(xy[0], xy[1], z, ws.theta_deg)
 
@@ -77,7 +107,7 @@ def plan(design: Design, ws: Workspace) -> Plan:
     for a in assignments:
         b = a.block
         src = f"pickup {a.pickup_square}"
-        dst = f"{a.cell_square} (cell {a.cell[0]},{a.cell[1]})"
+        dst = a.cell_square if a.cell is None else f"{a.cell_square} (cell {a.cell[0]},{a.cell[1]})"
         steps += [
             Step("move", f"travel above {src}", b, at(a.pickup_xy, ws.travel_z)),
             Step("move", f"approach {src}", b, at(a.pickup_xy, above)),
@@ -94,7 +124,11 @@ def plan(design: Design, ws: Workspace) -> Plan:
             Step("move", "retreat to travel height", b, at(a.cell_xy, ws.travel_z)),
         ]
     steps.append(Step("move", "return to safe start", target=Target(*ws.safe_start, ws.theta_deg)))
+    _check_bounds(ws, steps)
+    return tuple(steps)
 
+
+def _check_bounds(ws: Workspace, steps) -> None:
     out_of_bounds = [
         f"{s.label} ({s.target})"
         for s in steps
@@ -103,5 +137,3 @@ def plan(design: Design, ws: Workspace) -> Plan:
     ]
     if out_of_bounds:
         raise PlanError("targets outside configured workspace bounds: " + "; ".join(out_of_bounds))
-
-    return Plan(design, assignments, tuple(steps))
