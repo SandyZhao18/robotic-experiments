@@ -2,7 +2,9 @@
 
     uv run check-placement a1 --start      # where the block starts, before a trial
     uv run check-placement a3 --from a1    # where it landed, after the trial
-    uv run check-placement c3 --from c1 --color yellow
+    uv run check-placement c3 --from c1 --color yellow   # only consider yellow blocks
+
+The block measured is the one nearest the square (any known color unless --color is given).
 
 The block and the chessboard corners are measured in the same camera frame, so errors in the
 camera's mounting offset cancel out: the result is the block's physical offset on the mat.
@@ -150,11 +152,11 @@ def annotate(c: Capture, ws: workspace.Workspace, p: Placement) -> tuple[np.ndar
     return out, [int(x0), int(y0), int(x1), int(y1)]
 
 
-async def run(ws: workspace.Workspace, square: str, color: str) -> tuple[Placement, np.ndarray, list[int]]:
+async def run(ws: workspace.Workspace, square: str, color: str) -> tuple[Placement, str, np.ndarray, list[int]]:
     async with await connect() as machine:
-        c = await capture(machine, color)
+        c = await capture(machine, color, near=ws.measured_square_xy(square))
     p = measure(c.world_lattice, c.block_world[:2], ws, square)
-    return p, *annotate(c, ws, p)
+    return p, c.block_color, *annotate(c, ws, p)
 
 
 def main() -> None:
@@ -162,7 +164,8 @@ def main() -> None:
     parser.add_argument("square", help="the square the block should be on, e.g. a3")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
     parser.add_argument("--from", dest="src", metavar="SQUARE", help="where the block was picked up (for naming)")
-    parser.add_argument("--color", choices=sorted(BLOCK_COLORS), default="red", help="which block to measure (default: red)")
+    parser.add_argument("--color", choices=["any", *sorted(BLOCK_COLORS)], default="any",
+                        help="only consider blocks of this color (default: any)")
     kind = parser.add_mutually_exclusive_group()
     kind.add_argument("--recheck", action="store_true", help="re-measuring a block already logged (not a new trial)")
     kind.add_argument("--start", action="store_true", help="where the block starts, before the next trial")
@@ -170,7 +173,7 @@ def main() -> None:
     ws = workspace.load(args.workspace)
     try:
         workspace.parse_square(args.square)
-        p, photo, crop = asyncio.run(run(ws, args.square, args.color))
+        p, color, photo, crop = asyncio.run(run(ws, args.square, args.color))
     except (LocateError, ValueError) as e:
         raise SystemExit(f"Could not check placement: {e}")
 
@@ -178,18 +181,18 @@ def main() -> None:
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     tag = "recheck" if args.recheck else "start" if args.start else ""
     trial = trial_number(tag)
-    photo_path = PHOTO_DIR / photo_name(trial, tag, args.color, args.src, p, now)
+    photo_path = PHOTO_DIR / photo_name(trial, tag, color, args.src, p, now)
     cv2.imwrite(str(photo_path), photo)
 
     with LOG_PATH.open("a") as f:
         record = {**asdict(p), "placement_offset_in_use": list(ws.placement_offset_mm),
                   "placement_gradient_in_use": [list(row) for row in ws.placement_gradient],
-                  "trial": trial, "from": args.src, "color": args.color,
+                  "trial": trial, "from": args.src, "color": color,
                   "photo": str(photo_path), "crop_px": crop, "recheck": args.recheck, "start": args.start,
                   "recorded_at": now.isoformat(timespec="seconds")}
         f.write(json.dumps(record) + "\n")
 
-    print(f"Trial {trial}{f' ({tag})' if tag else ''}: {args.color} block is {p.distance_mm:.1f} mm from the center of {p.square}:")
+    print(f"Trial {trial}{f' ({tag})' if tag else ''}: {color} block is {p.distance_mm:.1f} mm from the center of {p.square}:")
     print(f"  {p.along_files_mm:+.1f} mm along files (+ = toward h)")
     print(f"  {p.along_ranks_mm:+.1f} mm along ranks (+ = toward rank 8)")
     print(f"  ({p.corners_used} corners; this view's mat is {p.view_shift_mm:.1f} mm from the configured one)")
