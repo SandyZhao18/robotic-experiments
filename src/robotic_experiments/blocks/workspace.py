@@ -55,7 +55,7 @@ class Workspace:
     grid_top_left: str  # square under design cell (row 0, col 0)
     grid_stride: int  # squares between neighbouring design cells
     pickup_squares: tuple[str, ...]  # used in this order
-    supply_files: str  # files where loose cubes are found by the camera, e.g. "fgh"
+    supply_files: str  # files where loose blocks wait (found by the camera), e.g. "efgh"
     find_pose: tuple[float, float, float]  # gripper position from which the camera sees the supply area
     max_reach_mm: float  # pickups farther than this from the arm's base are refused
 
@@ -86,6 +86,11 @@ class Workspace:
 
     required_obstacles: tuple[str, ...]
     arrival_tolerance_mm: float
+
+    @property
+    def build_files(self) -> str:
+        """Files where structures are built: everything that is not supply."""
+        return "".join(f for f in FILES if f not in self.supply_files)
 
     @property
     def fingers_open_along_ranks(self) -> bool:
@@ -259,6 +264,9 @@ class Workspace:
         except ValueError as e:
             return out + [f"build grid from {self.grid_top_left} with stride {self.grid_stride}: {e}"]
 
+        in_supply = sorted(c for c in cells if c[0] in self.supply_files)
+        if in_supply:
+            out.append(f"build grid reaches into the supply files ({self.supply_files}): {', '.join(in_supply)}")
         # Releasing on a cell (partly open) next to another cell; picking up (fully open) next to
         # any cell or other pickup.
         for a in sorted(cells):
@@ -296,7 +304,7 @@ def load(path: str | Path) -> Workspace:
         grid_top_left=g["top_left"],
         grid_stride=int(g["stride"]),
         pickup_squares=pickups,
-        supply_files=d.get("find", {}).get("supply_files", "fgh"),
+        supply_files=d.get("find", {}).get("supply_files", ""),  # no [find]: no supply area
         find_pose=tuple(d.get("find", {}).get("pose", (314.0, -392.0, 600.0))),
         max_reach_mm=float(d.get("find", {}).get("max_reach_mm", 700.0)),
         block_size_mm=float(d["block"]["size_mm"]),

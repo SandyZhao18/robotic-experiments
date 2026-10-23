@@ -35,16 +35,16 @@ placement_gradient = [[0.00294, 0.01232], [-0.01474, 0.00601]]
 
 [grid]
 # 3x3 build area. The design displays exactly as the board looks from white's side.
-top_left = "a7"                  # square under design cell (row 0, col 0): a7 c7 e7 / a5 c5 e5 / a3 c3 e3
-stride = 2                       # 2 = every other square, leaves room for the open fingers
+top_left = "a5"                  # square under design cell (row 0, col 0): a5 b5 c5 / a4 b4 c4 / a3 b3 c3
+stride = 1                       # adjacent squares (the partial release opening leaves room for the fingers)
 
 [pickups]
 # One block per square, used in this order. Must be outside the build grid and well spaced.
-squares = ["a1", "c1", "e1", "g1", "g3"]
+squares = ["e1", "e3", "e5", "g1", "g3"]
 
 [find]
 # Loose cubes are found by the camera in the supply files and built into files a-e.
-supply_files = "fgh"
+supply_files = "efgh"            # build in a-d; loose blocks wait in e-h
 pose = [314.0, -392.0, 600.0]    # gripper here -> the camera sees the whole board (same as locate-mat)
 max_reach_mm = 700.0             # farthest pickup so far: g3 at 651 mm
 

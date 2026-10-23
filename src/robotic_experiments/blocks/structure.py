@@ -165,7 +165,7 @@ def held_mm(p: Placed, fingers_open_along_ranks: bool = True) -> float:
     return p.shape.length if p.along == along_closing else p.shape.width
 
 
-def top_view(placed: list[Placed], files: str = "abcde", ranks=range(1, 9)) -> str:
+def top_view(placed: list[Placed], files: str = "abcd", ranks=range(1, 9)) -> str:
     """Tallest level on each square (seam blocks count on both squares), rank 8 at the top."""
     tallest: dict[str, int] = {}
     for p in placed:

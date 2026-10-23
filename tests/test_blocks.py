@@ -244,3 +244,12 @@ def test_executor_registers_the_camera_api_before_connecting():
     tree = ast.parse(pathlib.Path("src/robotic_experiments/blocks/executor.py").read_text())
     top = [n for n in tree.body if isinstance(n, ast.ImportFrom)]
     assert any(n.module == "viam.components.camera" for n in top)
+
+
+def test_build_grid_must_stay_out_of_the_supply_files():
+    ws = dataclasses.replace(WS, supply_files="efgh")
+    assert ws.build_files == "abcd"
+    assert any("supply files" in p for p in ws.layout_problems())  # fixture grid c7/e7/g7... uses e and g
+    ok = dataclasses.replace(ws, grid_top_left="a5", grid_stride=1, pickup_squares=("e1", "e3", "e5", "g1", "g3"),
+                             open_finger_span_mm=66.0, finger_clearance_mm=8.0, theta_deg=-91.0)
+    assert not [p for p in ok.layout_problems() if "supply" in p]

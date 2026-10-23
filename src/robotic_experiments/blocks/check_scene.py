@@ -4,7 +4,8 @@
     uv run check-scene --update   # also store the measured positions of matched blocks
     uv run check-scene --sync     # replace the record with what the camera sees
 
-Only the build files (a-e by default) are checked, and only blocks the camera can see from above:
+Only the build files (all files not in the workspace's supply_files) are checked, and only blocks
+the camera can see from above:
 the top of each stack. A recorded top matches a detection if it is within MATCH_XY_MM across the
 mat and MATCH_HEIGHT_MM in height. Any hand or other object at block height in the build area
 counts as unexpected, so a run will not start with something in the way.
@@ -24,7 +25,6 @@ from robotic_experiments.blocks.locate_mat import STRUCTURE_HEIGHT_RANGE_MM, Fra
 from robotic_experiments.connection import connect
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
-BUILD_FILES = "abcde"
 MATCH_XY_MM = 12.0
 MATCH_HEIGHT_MM = 12.0
 
@@ -48,7 +48,7 @@ class Report:
         return not self.missing and not self.unexpected
 
 
-def seen_in_build_area(frame: Frame, ws: workspace.Workspace, files: str = BUILD_FILES) -> list[Seen]:
+def seen_in_build_area(frame: Frame, ws: workspace.Workspace) -> list[Seen]:
     a1_view, fs, rs = fit_view(frame.world_lattice, ws)
     to_mat = np.linalg.inv(np.column_stack([fs, rs]))
     lo, hi = STRUCTURE_HEIGHT_RANGE_MM
@@ -57,7 +57,8 @@ def seen_in_build_area(frame: Frame, ws: workspace.Workspace, files: str = BUILD
         if not lo <= b.height_mm <= hi:
             continue
         f, r = to_mat @ (b.world[:2] - a1_view)
-        if -0.5 <= f <= len(files) - 0.5:
+        F = round(float(f))
+        if 0 <= F < len(workspace.FILES) and workspace.FILES[F] in ws.build_files:
             out.append(Seen(b.color, float(f), float(r), b.height_mm))
     return out
 
@@ -130,7 +131,7 @@ def main() -> None:
     except LocateError as e:
         raise SystemExit(f"Could not check the scene: {e}")
 
-    print(f"Scene record: {len(scene.load())} block(s); camera sees {len(seen)} top(s) in files {BUILD_FILES}:")
+    print(f"Scene record: {len(scene.load())} block(s); camera sees {len(seen)} top(s) in the build files ({ws.build_files}):")
     print(describe(report, ws.square_size_mm))
     if args.sync:
         scene.save(synced(seen, ws))
