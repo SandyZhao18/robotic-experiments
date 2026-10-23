@@ -1,0 +1,19 @@
+[project]
+name = "robotic-experiments"
+version = "0.1.0"
+description = "Experiments with robotic arms at Viam"
+authors = [
+    { name = "SandyZhao18", email = "bingpu.sandy.zhao@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.2.4",
+    "viam-sdk>=0.85.0",
+]
+
+[project.scripts]
+inspect-machine = "robotic_experiments.inspect_machine:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
