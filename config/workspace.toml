@@ -4,7 +4,7 @@
 # Status (2026-10-23): mat located by camera (locate-mat); square size and mat thickness
 # measured with a ruler; grip_z from the hover test. Open question: the table z below
 # disagrees with the camera by ~33 mm (see README) — grip_z does not depend on it.
-calibrated = true
+calibrated = false               # mat moved 2026-10-23 ~14:00; [mat] below is the OLD position
 frame = "world"
 
 [table]
@@ -50,6 +50,6 @@ xyz = [160.0, -560.0, 300.0]     # above the a-file end of the mat
 [limits]
 # Every target must fall inside this box.
 min_xyz = [  0.0, -720.0, -30.0]
-max_xyz = [560.0, -380.0, 500.0]
+max_xyz = [600.0, -150.0, 650.0]
 required_obstacles = ["table", "wall-front", "wall-side", "ceiling"]
 arrival_tolerance_mm = 5.0

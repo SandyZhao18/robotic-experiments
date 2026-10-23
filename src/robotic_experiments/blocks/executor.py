@@ -1,13 +1,14 @@
 """Guarded live execution of a construction plan. This is the only module that moves hardware.
 
     uv run blocks-run --hover a1                      # go 150 mm above a1 and stop, to measure
+    uv run blocks-run --goto 314 -392 600             # move the gripper to a point (e.g. aim the camera)
     uv run blocks-run --transfer a1 a3                # move one block from a1 to a3
     uv run blocks-run --preset one                    # build a design
     uv run blocks-run --preset one --stop-after 2     # stop after step 2 (e.g. to check the approach)
 
 Safety rules:
-- Refuses to run unless the workspace is marked calibrated. The one exception is --hover,
-  which only needs the mat located and must stay at least MIN_UNCALIBRATED_HOVER_MM above it.
+- Refuses to run unless the workspace is marked calibrated. The exceptions are --hover and
+  --goto, which must stay at least MIN_UNCALIBRATED_HOVER_MM above the mat surface.
 - Refuses plans with more blocks than --max-blocks (default 1, the first milestone).
 - Checks the machine before moving: components present and healthy, obstacles configured,
   arm still, gripper empty.
@@ -181,9 +182,10 @@ def main() -> None:
 
     print(describe(p, ws))
     print()
-    if args.hover:
-        if args.hover_z < ws.mat_top_z + MIN_UNCALIBRATED_HOVER_MM and not ws.calibrated:
-            sys.exit(f"Refusing: uncalibrated hover must stay at z >= {ws.mat_top_z + MIN_UNCALIBRATED_HOVER_MM:.0f}.")
+    if args.hover or args.goto:
+        z = args.goto[2] if args.goto else args.hover_z
+        if z < ws.mat_top_z + MIN_UNCALIBRATED_HOVER_MM and not ws.calibrated:
+            sys.exit(f"Refusing: uncalibrated moves must stay at z >= {ws.mat_top_z + MIN_UNCALIBRATED_HOVER_MM:.0f}.")
     elif not ws.calibrated:
         sys.exit(f"Refusing to move: {args.workspace} is not marked calibrated.")
     if len(p.assignments) > args.max_blocks:

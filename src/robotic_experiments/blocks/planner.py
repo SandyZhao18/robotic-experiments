@@ -95,6 +95,13 @@ def plan_hover(ws: Workspace, square: str, z: float) -> Plan:
     return Plan(None, (), steps)
 
 
+def plan_goto(ws: Workspace, x: float, y: float, z: float) -> Plan:
+    """Move the gripper to a point, tool down at the configured finger angle (e.g. to aim the camera)."""
+    steps = (Step("move", f"go to x={x:.0f} y={y:.0f} z={z:.0f}", target=Target(x, y, z, ws.theta_deg)),)
+    _check_bounds(ws, steps)
+    return Plan(None, (), steps)
+
+
 def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
     def at(xy, z):
         return Target(xy[0], xy[1], z, ws.theta_deg)
