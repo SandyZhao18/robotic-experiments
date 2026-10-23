@@ -1,6 +1,6 @@
 """Fit the placement correction across the mat from logged trials. Offline: reads the log only.
 
-    uv run fit-correction --since-trial 7
+    uv run fit-correction --since-trial 7 --exclude 8
 
 Model: when sent to a square, the fingers end up off by an error that varies linearly across
 the mat, err(u, v) = e0 + E @ (u, v), with (u, v) the square's position in mm from a1 along
@@ -70,6 +70,7 @@ def fit(trials: list[dict], ws: workspace.Workspace) -> tuple[float, np.ndarray]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--since-trial", type=int, default=1, help="ignore earlier trials (e.g. other measurement method)")
+    parser.add_argument("--exclude", type=int, nargs="*", default=[], help="trial numbers to leave out (known bad runs)")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
     args = parser.parse_args()
 
@@ -78,7 +79,7 @@ def main() -> None:
     current = (list(ws.placement_offset_mm), [list(r) for r in ws.placement_gradient])
     trials = [
         t for t in pair_starts(recs)
-        if t.get("trial", 0) >= args.since_trial
+        if t.get("trial", 0) >= args.since_trial and t.get("trial") not in args.exclude
         and (t.get("placement_offset_in_use"), t.get("placement_gradient_in_use", [[0.0, 0.0], [0.0, 0.0]])) == current
     ]
     if not trials:
@@ -93,6 +94,8 @@ def main() -> None:
     new_gradient = G - E
 
     print(f"Using {len(trials)} trials: " + ", ".join(f"{t['trial']} ({t.get('from')}->{t['square']})" for t in trials))
+    if args.exclude:
+        print(f"Excluded trials: {', '.join(map(str, args.exclude))}")
     print(f"Error model: ranks offset {e0_r:+.2f} mm; per metre along files/ranks: "
           f"files [{E[0, 0] * 1000:+.1f}, {E[0, 1] * 1000:+.1f}], ranks [{E[1, 0] * 1000:+.1f}, {E[1, 1] * 1000:+.1f}] mm")
     print("\nPredicted remaining error per trial (files change, ranks), mm:")

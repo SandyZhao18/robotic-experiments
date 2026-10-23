@@ -22,9 +22,13 @@ thickness_mm = 3.0               # measured; mat surface = table z + thickness
 # Correction from placement trials, mm along [files a->h, ranks 1->8], added to where the
 # arm is sent. Trial 1 (a1->a3, 2026-10-23): block landed 22.3 mm short along ranks.
 # Mat moved and re-located from the overview pose: trial 5 landed +7.6 along ranks -> 14.7.
+# Calibration runs A/B (trials 7-12, a3 c3 e3 a7 e7 c5) showed the error varies across the mat
+# (~0.8 deg rotation, likely camera yaw), so it is now an offset plus a gradient:
+#   `uv run fit-correction --since-trial 7 --exclude 8`  (trial 8: yellow cube twisted on c3)
 # Part of this correction is camera calibration error, which depends on the pose locate-mat
-# ran from; re-check it whenever the mat is re-located.
-placement_offset_mm = [0.0, 14.7]
+# ran from; refit it whenever the mat is re-located.
+placement_offset_mm = [0.0, 18.48]
+placement_gradient = [[0.00294, 0.01232], [-0.01474, 0.00601]]
 
 [grid]
 # 3x3 build area. The design displays exactly as the board looks from white's side.
