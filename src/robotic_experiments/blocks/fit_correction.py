@@ -1,6 +1,7 @@
 """Fit the placement correction across the mat from logged trials. Offline: reads the log only.
 
     uv run fit-correction --since-trial 7 --exclude 8
+    uv run fit-correction --since-trial 18 --offset-only   # shift only; keep the fitted gradient
 
 Model: when sent to a square, the fingers end up off by an error that varies linearly across
 the mat, err(u, v) = e0 + E @ (u, v), with (u, v) the square's position in mm from a1 along
@@ -70,6 +71,8 @@ def fit(trials: list[dict], ws: workspace.Workspace) -> tuple[float, np.ndarray]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--since-trial", type=int, default=1, help="ignore earlier trials (e.g. other measurement method)")
+    parser.add_argument("--offset-only", action="store_true",
+                        help="only re-fit the ranks offset (trials cover too small an area for gradients)")
     parser.add_argument("--exclude", type=int, nargs="*", default=[], help="trial numbers to leave out (known bad runs)")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
     args = parser.parse_args()
@@ -85,10 +88,13 @@ def main() -> None:
     if not trials:
         sys.exit("No trials with the current correction since that trial.")
 
-    try:
-        e0_r, E = fit(trials, ws)
-    except FitError as e:
-        sys.exit(f"Cannot fit yet: {e}.")
+    if args.offset_only:
+        e0_r, E = float(np.mean([t["along_ranks_mm"] for t in trials])), np.zeros((2, 2))
+    else:
+        try:
+            e0_r, E = fit(trials, ws)
+        except FitError as e:
+            sys.exit(f"Cannot fit yet: {e}.")
     G = np.array(ws.placement_gradient)
     new_offset = (ws.placement_offset_mm[0], ws.placement_offset_mm[1] - e0_r)
     new_gradient = G - E

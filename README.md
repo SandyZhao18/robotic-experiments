@@ -81,7 +81,8 @@ Everything is in the `world` frame, in mm; heights are for the gripper frame.
 4. **Finger angle:** the gripper x-axis points at 180° − θ; pick θ so it lines up with the files.
 5. **Placement correction:** run transfers to squares spread over the grid, `check-placement` each
    (with `--start` before), then `fit-correction` and copy the result into `[mat]`. Refit whenever
-   the mat is re-located.
+   the mat is re-located. After a gripper change, trials over a small area can refit just the
+   offset with `--offset-only`, keeping the gradient from the spread-out fit.
 
 `check-placement` measures a block against the chessboard squares **in the same photo**, so errors
 in the camera's mounting offset cancel out. It finds the block of any known color (red, orange,
@@ -117,6 +118,9 @@ uv run placement-report
 | Verification on unseen squares (13–14) | 1.3 and 3.2 mm |
 | Two blocks, then a 3-block line (15–17) | all placed; two landed ~12 mm off (finger pad, below) |
 | Adjacent squares (44 mm release opening) | cube stuck to the finger; caught by the release check |
+| Finger rubber taped, adjacent pair a3–a4 (18–19) | released cleanly; neighbour moved 0.2 mm |
+| **Adjacent L**, one cube per run (20–24) | all five placed, none nudged; 5–9 mm off, consistently +6.4 mm along ranks |
+| Offset refit for the taped finger (`--offset-only`) | predicted residuals within ±1.6 mm along ranks |
 
 ### Known issues
 

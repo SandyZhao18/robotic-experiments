@@ -27,7 +27,10 @@ thickness_mm = 3.0               # measured; mat surface = table z + thickness
 #   `uv run fit-correction --since-trial 7 --exclude 8`  (trial 8: yellow cube twisted on c3)
 # Part of this correction is camera calibration error, which depends on the pose locate-mat
 # ran from; refit it whenever the mat is re-located.
-placement_offset_mm = [0.0, 18.48]
+# Taping the padless finger shifted placements +6.4 mm along ranks (trials 18-24, all in
+# files a-c / ranks 3-5, too small an area for gradients), so only the offset was refit:
+#   `uv run fit-correction --since-trial 18 --offset-only`   18.48 -> 12.11
+placement_offset_mm = [0.0, 12.11]
 placement_gradient = [[0.00294, 0.01232], [-0.01474, 0.00601]]
 
 [grid]
