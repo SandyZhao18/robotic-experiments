@@ -2,7 +2,6 @@
 
 import asyncio
 
-from viam.components.audio_in import AudioIn
 from viam.components.camera import Camera
 from viam.components.arm import Arm
 from viam.components.gripper import Gripper
@@ -11,17 +10,9 @@ from viam.services.vision import VisionClient
 from robotic_experiments.connection import connect
 
 # (resource class, name, read-only method to call).
-# Generic components/services (crossbar, crossbar-y, puppet-movement, hand-seeker,
-# guillermo, hand-mimic, arm-shaker-extra) are left out on purpose: their only
-# method is do_command, which may actuate.
+# Generic components/services are left out on purpose: their only method is
+# do_command, which may actuate.
 CHECKS = [
-    (AudioIn, "mic", "get_properties"),
-    (AudioIn, "heard-dance", "get_properties"),
-    (AudioIn, "heard-lunchtime", "get_properties"),
-    (AudioIn, "heard-home", "get_properties"),
-    (AudioIn, "heard-stop", "get_properties"),
-    (AudioIn, "heard-timeout", "get_properties"),
-    (AudioIn, "heard-mimic", "get_properties"),
     (Camera, "audience-cam", "get_images"),
     (Camera, "cam", "get_images"),
     (Arm, "arm", "get_end_position"),
