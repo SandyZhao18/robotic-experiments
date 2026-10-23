@@ -45,6 +45,9 @@ class Workspace:
     h1: Vec2
     a8: Vec2
     square_size_mm: float  # measured with a ruler; cross-checks the recorded corners
+    # Correction found by placement trials, in mm along (files a->h, ranks 1->8). Applied to
+    # where the arm is sent, not to where the camera measured the mat.
+    placement_offset_mm: tuple[float, float]
 
     grid_top_left: str  # square under design cell (row 0, col 0)
     grid_stride: int  # squares between neighbouring design cells
@@ -79,10 +82,28 @@ class Workspace:
     def rank_step(self) -> Vec2:
         return ((self.a8[0] - self.a1[0]) / 7, (self.a8[1] - self.a1[1]) / 7)
 
-    def square_xy(self, name: str) -> Vec2:
+    @property
+    def file_unit(self) -> Vec2:
+        n = math.hypot(*self.file_step)
+        return (self.file_step[0] / n, self.file_step[1] / n)
+
+    @property
+    def rank_unit(self) -> Vec2:
+        n = math.hypot(*self.rank_step)
+        return (self.rank_step[0] / n, self.rank_step[1] / n)
+
+    def measured_square_xy(self, name: str) -> Vec2:
+        """Square center as the camera measured it."""
         f, r = parse_square(name)
         fs, rs = self.file_step, self.rank_step
         return (self.a1[0] + f * fs[0] + r * rs[0], self.a1[1] + f * fs[1] + r * rs[1])
+
+    def square_xy(self, name: str) -> Vec2:
+        """Where to send the gripper for this square: measured center plus the placement correction."""
+        x, y = self.measured_square_xy(name)
+        of, orank = self.placement_offset_mm
+        fu, ru = self.file_unit, self.rank_unit
+        return (x + of * fu[0] + orank * ru[0], y + of * fu[1] + orank * ru[1])
 
     def cell_square(self, row: int, col: int) -> str:
         """Design rows go down the display, i.e. toward rank 1."""
@@ -166,6 +187,7 @@ def load(path: str | Path) -> Workspace:
         h1=tuple(m["h1"]),
         a8=tuple(m["a8"]),
         square_size_mm=float(m["square_size_mm"]),
+        placement_offset_mm=tuple(m.get("placement_offset_mm", (0.0, 0.0))),
         grid_top_left=g["top_left"],
         grid_stride=int(g["stride"]),
         pickup_squares=pickups,

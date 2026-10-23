@@ -111,3 +111,11 @@ def test_rejects_pickups_too_close():
     ws = dataclasses.replace(WS, pickup_squares=("a1", "b1"))
     with pytest.raises(PlanError, match=r"pickup 1 \(b1\) is"):
         plan(Design.preset("one"), ws)
+
+
+def test_placement_offset_shifts_targets_not_measurements():
+    ws = dataclasses.replace(WS, placement_offset_mm=(0.0, 10.0))
+    assert ws.measured_square_xy("e5") == WS.square_xy("e5")
+    mx, my = ws.measured_square_xy("e5")
+    x, y = ws.square_xy("e5")
+    assert (x - mx, y - my) == pytest.approx((10 * ws.rank_unit[0], 10 * ws.rank_unit[1]))

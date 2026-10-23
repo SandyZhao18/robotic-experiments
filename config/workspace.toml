@@ -18,6 +18,9 @@ h1 = [ 95.3, -938.0]
 a8 = [489.1, -532.1]
 square_size_mm = 57.0            # measured with a ruler; cross-checks the corners above
 thickness_mm = 3.0               # measured; mat surface = table z + thickness
+# Correction from placement trials, mm along [files a->h, ranks 1->8], added to where the
+# arm is sent. Trial 1 (a1->a3, 2026-10-23): block landed 22.3 mm short along ranks.
+placement_offset_mm = [0.0, 22.3]
 
 [grid]
 # 3x3 build area. The design displays exactly as the board looks from white's side.

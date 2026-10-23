@@ -36,7 +36,7 @@ CAMERA = "cam"
 FRAME = "world"
 OUT_JSON = Path("config/mat_calibration.json")
 OUT_IMAGE = Path("config/mat_calibration.jpg")
-PATTERNS = [(7, 7), (7, 6), (6, 7), (7, 5), (5, 7), (6, 6), (6, 5), (5, 6), (5, 5)]
+PATTERNS = [(7, 7), (7, 6), (6, 7), (7, 5), (5, 7), (6, 6), (6, 5), (5, 6), (5, 5), (6, 4), (4, 6), (5, 4), (4, 5), (4, 4)]
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
 DEPTH_DISAGREEMENT_WARN_MM = 10.0
 SQUARE_SIZE_TOLERANCE_MM = 1.5
@@ -242,36 +242,50 @@ class DepthCheck:
     block_height_mm: float
 
 
+@dataclass
+class Capture:
+    """One camera frame, measured: chessboard inner corners and the red block, in `world`."""
+
+    bgr: np.ndarray
+    corners_px: np.ndarray  # (rows, cols, 2)
+    world_lattice: np.ndarray  # (rows, cols, 3)
+    block_px: tuple[float, float]
+    block_world: np.ndarray  # (3,) block top center
+
+
+async def capture(machine) -> Capture:
+    if await Arm.from_robot(machine, ARM).is_moving():
+        raise LocateError("arm is moving; wait for it to stop")
+    cam = Camera.from_robot(machine, CAMERA)
+    k = (await cam.get_properties()).intrinsic_parameters
+    intr = (k.focal_x_px, k.focal_y_px, k.center_x_px, k.center_y_px)
+    images, _ = await cam.get_images()
+    by_name = {im.name: im for im in images}
+    if "color" not in by_name or "depth" not in by_name:
+        raise LocateError(f"camera returned {sorted(by_name)}, expected color and depth")
+    bgr = cv2.imdecode(np.frombuffer(by_name["color"].data, np.uint8), cv2.IMREAD_COLOR)
+    depth = decode_depth(by_name["depth"].data)
+    if depth.shape != bgr.shape[:2]:
+        raise LocateError(f"depth {depth.shape} and color {bgr.shape[:2]} are not aligned")
+
+    corners = find_corners(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
+    rows, cols = corners.shape[:2]
+    px = corners.reshape(-1, 2)
+    block_px = find_red_block(bgr)
+
+    depths = np.array([sample_depth(depth, u, v) for u, v in px])
+    on_plane = project_onto_plane(px, depths, intr)
+    block_cam = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
+    world = await to_world(machine, np.vstack([on_plane, block_cam]))
+    return Capture(bgr, corners, world[:-1].reshape(rows, cols, 3), block_px, world[-1])
+
+
 async def capture_and_fit(ws: workspace.Workspace) -> tuple[MatFit, DepthCheck, np.ndarray]:
     async with await connect() as machine:
-        if await Arm.from_robot(machine, ARM).is_moving():
-            raise LocateError("arm is moving; wait for it to stop")
-        cam = Camera.from_robot(machine, CAMERA)
-        props = await cam.get_properties()
-        k = props.intrinsic_parameters
-        intr = (k.focal_x_px, k.focal_y_px, k.center_x_px, k.center_y_px)
-        images, _ = await cam.get_images()
-        by_name = {im.name: im for im in images}
-        if "color" not in by_name or "depth" not in by_name:
-            raise LocateError(f"camera returned {sorted(by_name)}, expected color and depth")
-        bgr = cv2.imdecode(np.frombuffer(by_name["color"].data, np.uint8), cv2.IMREAD_COLOR)
-        depth = decode_depth(by_name["depth"].data)
-        if depth.shape != bgr.shape[:2]:
-            raise LocateError(f"depth {depth.shape} and color {bgr.shape[:2]} are not aligned")
+        c = await capture(machine)
 
-        corners = find_corners(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
-        rows, cols = corners.shape[:2]
-        px = corners.reshape(-1, 2)
-        block_px = find_red_block(bgr)
-
-        depths = np.array([sample_depth(depth, u, v) for u, v in px])
-        on_plane = project_onto_plane(px, depths, intr)
-        block_cam = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
-        world = await to_world(machine, np.vstack([on_plane, block_cam]))
-
-    world_lattice, block_world = world[:-1].reshape(rows, cols, 3), world[-1]
-    depth_mat_z, depth_block_z = float(world_lattice[..., 2].mean()), float(block_world[2])
-    fit = fit_board(world_lattice, block_world)
+    depth_mat_z, depth_block_z = float(c.world_lattice[..., 2].mean()), float(c.block_world[2])
+    fit = fit_board(c.world_lattice, c.block_world)
     if abs(fit.square_size_mm - ws.square_size_mm) > SQUARE_SIZE_TOLERANCE_MM:
         raise LocateError(
             f"camera measures {fit.square_size_mm:.1f} mm squares but the ruler says {ws.square_size_mm} mm; "
@@ -282,7 +296,7 @@ async def capture_and_fit(ws: workspace.Workspace) -> tuple[MatFit, DepthCheck, 
         disagreement_mm=float(depth_mat_z - ws.mat_top_z),
         block_height_mm=float(depth_block_z - depth_mat_z),
     )
-    image = annotate(bgr, corners, world_lattice, block_px, block_world[:2])
+    image = annotate(c.bgr, c.corners_px, c.world_lattice, c.block_px, c.block_world[:2])
     return fit, check, image
 
 
