@@ -79,7 +79,7 @@ def find_loose(ws: workspace.Workspace) -> list[Loose]:
     print(f"Camera found {len(found)} block(s):")
     print(find_cubes.table(found, ws))
     print(f"Photo: {find_cubes.save_photo(photo, len(found))}\n")
-    return [Loose(f"{c.color} {c.square}", c.f, c.r, c.usable(ws) is None) for c in found]
+    return [Loose(f"{c.color} {c.square}", c.f, c.r, c.usable(ws) is None, c.rotation_deg) for c in found]
 
 
 def describe(p: Plan, ws: workspace.Workspace) -> str:

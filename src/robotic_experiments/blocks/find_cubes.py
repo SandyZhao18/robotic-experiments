@@ -27,7 +27,6 @@ from robotic_experiments.connection import connect
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
 PHOTO_DIR = Path("runs/finds")
-MAX_ROTATION_DEG = 20.0  # parallel fingers square up a cube twisted this much as they close
 MIN_TOP_FRACTION = 0.6  # a detection whose top face is narrower than this x block size is a fragment
 
 
@@ -49,8 +48,6 @@ class Found:
             return f"not in the supply files ({ws.supply_files})"
         if math.hypot(*ws.xy_at(self.f, self.r)) > ws.max_reach_mm:
             return f"out of reach (> {ws.max_reach_mm:.0f} mm)"
-        if abs(self.rotation_deg) > MAX_ROTATION_DEG:
-            return f"twisted {self.rotation_deg:+.0f} deg (straighten to within {MAX_ROTATION_DEG:.0f})"
         return None
 
     @property

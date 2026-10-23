@@ -189,3 +189,28 @@ def test_plan_from_loose_blocks_needs_enough():
 
     with pytest.raises(PlanError, match="only 1 pickable blocks were found"):
         plan(Design.preset("line"), WS, [Loose("red", 6.0, 1.0)])
+
+
+def test_twisted_block_is_grabbed_with_the_wrist_turned_at_travel_height():
+    from robotic_experiments.blocks.planner import Loose, wrist_theta
+
+    ws = dataclasses.replace(WS, theta_deg=-91.0)
+    p = plan(Design.preset("one"), ws, [Loose("red", 6.0, 1.0, rotation_deg=25.0)])
+    turned = [s for s in p.steps if s.target and s.target.theta != -91.0]
+    assert wrist_theta(-91.0, 25.0) == -116.0
+    assert {s.target.theta for s in turned} == {-116.0}
+    labels = [s.label for s in p.steps]
+    i_turn = next(i for i, l in enumerate(labels) if l.startswith("turn wrist +25"))
+    i_back = next(i for i, l in enumerate(labels) if l.startswith("turn wrist back"))
+    assert p.steps[i_turn].target.z == p.steps[i_back].target.z == ws.travel_z
+    assert labels[i_turn - 1].startswith("travel above") and labels[i_back - 1] == "lift to travel height"
+    # a square-enough block is grabbed without turning
+    q = plan(Design.preset("one"), ws, [Loose("red", 6.0, 1.0, rotation_deg=1.0)])
+    assert not any(s.label.startswith("turn wrist") for s in q.steps)
+
+
+def test_turned_fingers_change_which_neighbours_are_in_the_way():
+    ws = dataclasses.replace(WS, theta_deg=-91.0)
+    # neighbour one square away along the files: beside the usual fingers, in front of fingers turned 90
+    assert ws.finger_conflict_at((6.0, 1.0), (5.0, 1.0), 100.0, "n") is None
+    assert ws.finger_conflict_at((6.0, 1.0), (5.0, 1.0), 100.0, "n", turn_deg=90.0)

@@ -94,10 +94,15 @@ class Workspace:
         """
         return self.finger_conflict_at(parse_square(square), parse_square(neighbour), span_mm, neighbour)
 
-    def finger_conflict_at(self, at: Vec2, other: Vec2, span_mm: float, label: str) -> str | None:
-        """finger_conflict for mat coordinates (f, r) instead of square names."""
+    def finger_conflict_at(self, at: Vec2, other: Vec2, span_mm: float, label: str, turn_deg: float = 0.0) -> str | None:
+        """finger_conflict for mat coordinates (f, r) instead of square names. `turn_deg` turns the
+        fingers counterclockwise (files toward ranks) from their usual direction, e.g. to match a
+        twisted block."""
         (u1, v1), (u2, v2) = self.uv_at(*at), self.uv_at(*other)
-        d_open, d_across = (abs(v2 - v1), abs(u2 - u1)) if self.fingers_open_along_ranks else (abs(u2 - u1), abs(v2 - v1))
+        base = 90.0 if self.fingers_open_along_ranks else 0.0  # opening direction, degrees from the files axis
+        a = math.radians(base + turn_deg)
+        du, dv = u2 - u1, v2 - v1
+        d_open, d_across = abs(du * math.cos(a) + dv * math.sin(a)), abs(-du * math.sin(a) + dv * math.cos(a))
         half, margin = self.block_size_mm / 2, self.finger_clearance_mm
         need_open, need_across = span_mm / 2 + half + margin, self.finger_width_mm / 2 + half + margin
         if d_open < need_open and d_across < need_across:

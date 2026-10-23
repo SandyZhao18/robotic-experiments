@@ -37,6 +37,7 @@ class Assignment:
     cell: tuple[int, int] | None  # design cell, None for a plain square-to-square transfer
     cell_square: str
     cell_xy: tuple[float, float]
+    pickup_turn_deg: float = 0.0  # wrist turn to grab a twisted block face-on (counterclockwise, degrees)
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class Loose:
     f: float
     r: float
     pickable: bool = True
+    rotation_deg: float = 0.0  # twist vs the mat lines, counterclockwise from files toward ranks, in (-45, 45]
 
 
 def plan(design: Design, ws: Workspace, loose: list[Loose] | None = None) -> Plan:
@@ -67,8 +69,8 @@ def plan(design: Design, ws: Workspace, loose: list[Loose] | None = None) -> Pla
     if problems:
         raise PlanError("; ".join(problems))
     filled = design.filled()
-    sources = ([(sq, ws.square_xy(sq), parse_square(sq)) for sq in ws.pickup_squares] if loose is None
-               else [(c.label, ws.xy_at(c.f, c.r), (c.f, c.r)) for c in loose if c.pickable])
+    sources = ([(sq, ws.square_xy(sq), parse_square(sq), 0.0) for sq in ws.pickup_squares] if loose is None
+               else [(c.label, ws.xy_at(c.f, c.r), (c.f, c.r), c.rotation_deg) for c in loose if c.pickable])
     if not filled:
         problems.append("design has no filled cells")
     if len(filled) > len(sources):
@@ -80,16 +82,16 @@ def plan(design: Design, ws: Workspace, loose: list[Loose] | None = None) -> Pla
     if loose is not None:
         # Every block on the mat, chosen or not, must clear the fully open fingers at each pickup.
         chosen = sources[: len(filled)]
-        for i, (label, _, at) in enumerate(chosen):
+        for i, (label, _, at, turn) in enumerate(chosen):
             for c in loose:
-                if (c.f, c.r) != at and (why := ws.finger_conflict_at(at, (c.f, c.r), ws.full_open_span_mm, c.label)):
+                if (c.f, c.r) != at and (why := ws.finger_conflict_at(at, (c.f, c.r), ws.full_open_span_mm, c.label, turn)):
                     problems.append(f"picking {label}: {why} - spread the blocks apart")
         if problems:
             raise PlanError("; ".join(problems))
 
     assignments = tuple(
-        Assignment(i, i, label, xy, cell, ws.cell_square(*cell), ws.cell_xy(*cell))
-        for i, ((label, xy, _), cell) in enumerate(zip(sources, filled))
+        Assignment(i, i, label, xy, cell, ws.cell_square(*cell), ws.cell_xy(*cell), turn)
+        for i, ((label, xy, _, turn), cell) in enumerate(zip(sources, filled))
     )
     return Plan(design, assignments, _pick_and_place_steps(ws, assignments))
 
@@ -147,9 +149,19 @@ def plan_goto(ws: Workspace, x: float, y: float, z: float) -> Plan:
     return Plan(None, (), steps)
 
 
+MIN_TURN_DEG = 2.0  # smaller twists are grabbed at the usual wrist angle
+
+
+def wrist_theta(theta: float, turn_deg: float) -> float:
+    """Wrist angle that turns the fingers `turn_deg` counterclockwise. The gripper x-axis points at
+    180 - theta, so turning the fingers counterclockwise lowers theta. Normalised to (-180, 180]."""
+    t = (theta - turn_deg) % 360.0
+    return t - 360.0 if t > 180.0 else t
+
+
 def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
-    def at(xy, z):
-        return Target(xy[0], xy[1], z, ws.theta_deg)
+    def at(xy, z, theta=None):
+        return Target(xy[0], xy[1], z, ws.theta_deg if theta is None else theta)
 
     grip_z = ws.grip_z
     above = grip_z + ws.approach_height_mm
@@ -160,14 +172,20 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
         b = a.block
         src = f"pickup {a.pickup_square}"
         dst = a.cell_square if a.cell is None else f"{a.cell_square} (cell {a.cell[0]},{a.cell[1]})"
+        turned = abs(a.pickup_turn_deg) >= MIN_TURN_DEG
+        tp = wrist_theta(ws.theta_deg, a.pickup_turn_deg) if turned else ws.theta_deg
         steps += [
             Step("move", f"travel above {src}", b, at(a.pickup_xy, ws.travel_z)),
-            Step("move", f"approach {src}", b, at(a.pickup_xy, above)),
+            *([Step("move", f"turn wrist {a.pickup_turn_deg:+.0f} deg to match the block", b,
+                    at(a.pickup_xy, ws.travel_z, tp))] if turned else []),
+            Step("move", f"approach {src}", b, at(a.pickup_xy, above, tp)),
             Step("open", "open fingers", b),
-            Step("move", f"descend to grip at {src}", b, at(a.pickup_xy, grip_z)),
+            Step("move", f"descend to grip at {src}", b, at(a.pickup_xy, grip_z, tp)),
             Step("grab", "close fingers and verify grasp", b),
-            Step("move", "lift to approach height", b, at(a.pickup_xy, above)),
-            Step("move", "lift to travel height", b, at(a.pickup_xy, ws.travel_z)),
+            Step("move", "lift to approach height", b, at(a.pickup_xy, above, tp)),
+            Step("move", "lift to travel height", b, at(a.pickup_xy, ws.travel_z, tp)),
+            *([Step("move", "turn wrist back (block is now square to the mat)", b,
+                    at(a.pickup_xy, ws.travel_z))] if turned else []),
             Step("move", f"travel above {dst}", b, at(a.cell_xy, ws.travel_z)),
             Step("move", f"approach {dst}", b, at(a.cell_xy, above)),
             Step("move", f"lower block onto {dst}", b, at(a.cell_xy, release_z)),
