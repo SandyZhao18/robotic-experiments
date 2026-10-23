@@ -134,7 +134,8 @@ def main() -> None:
     print(describe(report, ws.square_size_mm))
     if args.sync:
         scene.save(synced(seen, ws))
-        print(f"Record replaced with {len(seen)} block(s) from the camera.")
+        print(f"Record replaced with {len(seen)} block(s) from the camera; it matches what the camera sees now.")
+        return
     elif args.update and report.matched:
         scene.save(updated(scene.load(), report))
         print(f"Stored measured positions for {len(report.matched)} block(s).")

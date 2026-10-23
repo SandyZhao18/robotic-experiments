@@ -86,7 +86,10 @@ def test_tower_releases_one_cube_higher_each_level():
     placed = solve([{"at": "a3"}, {"at": "a3"}, {"at": "a3"}], ws.square_size_mm)
     p = plan_structure(ws, placed, [("f1", (5.0, 0.0)), ("g1", (6.0, 0.0)), ("h1", (7.0, 0.0))])
     lows = [s.target.z for s in p.steps if s.label.startswith("lower block")]
-    assert [round(z - lows[0], 6) for z in lows] == [0.0, 30.0, 60.0]
+    stack = ws.stack_release_offset_mm - ws.place_release_offset_mm
+    assert [round(z - lows[0], 6) for z in lows] == [0.0, 30.0 + stack, 60.0 + stack]
+    # each stacked block is checked by the camera from the safe start before going on
+    assert [s.expect.level for s in p.steps if s.kind == "verify_placed"] == [2, 3]
     assert all(s.position == ws.release_position(30.0) for s in p.steps if s.kind == "release")
 
 
@@ -142,7 +145,7 @@ def test_resume_skips_blocks_already_in_the_scene():
     p = plan_structure(ws, placed, [("f1", (5.0, 0.0)), ("g1", (6.0, 0.0)), ("h1", (7.0, 0.0))], existing, start=2)
     assert [a.block for a in p.assignments] == [2]
     (low,) = [s.target.z for s in p.steps if s.label.startswith("lower block")]
-    assert low == pytest.approx(ws.grip_z + 60.0 + ws.place_release_offset_mm)
+    assert low == pytest.approx(ws.grip_z + 60.0 + ws.stack_release_offset_mm)
 
 
 def test_unrelated_scene_blocks_are_obstacles():

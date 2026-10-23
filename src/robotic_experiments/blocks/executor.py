@@ -168,6 +168,28 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
             raise Abort("the build area does not match the scene record (see above; check-scene --sync to re-record)")
         if report.matched:
             scene.save(check_scene.updated(scene.load(), report))  # use measured positions from here on
+    elif s.kind == "verify_placed":
+        from robotic_experiments.blocks import check_scene
+        from robotic_experiments.blocks.locate_mat import LocateError, capture_frame
+
+        want = s.expect
+        try:
+            frame = await bounded(capture_frame(machine), 60, "camera capture")
+        except LocateError as e:
+            raise Abort(f"checking the placed block: {e}")
+        seen = check_scene.seen_in_build_area(frame, ws)
+        near = min(seen, key=lambda o: math.dist((o.f, o.r), (want.f, want.r)), default=None)
+        off = math.dist((near.f, near.r), (want.f, want.r)) * ws.square_size_mm if near else float("inf")
+        if near is None or off > check_scene.MATCH_XY_MM or abs(near.top_mm - want.top_mm) > check_scene.MATCH_HEIGHT_MM:
+            got = f"nearest top {near.top_mm:.0f} mm high, {off:.0f} mm away" if near else "nothing there"
+            raise Abort(f"the block on {want.at} did not stay: expected a top {want.top_mm:.0f} mm high there, {got}")
+        print(f"  placed block on {want.at}: top {near.top_mm:.0f} mm, {off:.1f} mm from target", flush=True)
+        blocks = scene.load()  # store where it really is (the newest record of this block)
+        for k in range(len(blocks) - 1, -1, -1):
+            if (blocks[k].at, blocks[k].level) == (want.at, want.level):
+                blocks[k] = dataclasses.replace(blocks[k], f=near.f, r=near.r, measured=True, color=near.color)
+                break
+        scene.save(blocks)
     elif s.kind == "check_released":
         # In G1 mode "holding" only reflects finger position, so test physically: well above the
         # placed block, close the fingers. They close fully on air; they stop on a stuck block.

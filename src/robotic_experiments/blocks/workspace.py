@@ -72,6 +72,7 @@ class Workspace:
     gap_mm_per_unit: float  # inner finger gap ~= gap_mm_per_unit * position + gap_mm_at_zero
     gap_mm_at_zero: float
     release_side_clearance_mm: float  # gap left on each side of a block when releasing it
+    stack_release_offset_mm: float  # like place_release_offset_mm, for blocks released onto other blocks
 
     grip_z: float  # gripper-frame z when the fingers are around a block on the mat
     approach_height_mm: float  # above grip_z, for approach and retreat
@@ -309,6 +310,7 @@ def load(path: str | Path) -> Workspace:
         gap_mm_per_unit=float(grip.get("gap_mm_per_unit", 0.1)),
         gap_mm_at_zero=float(grip.get("gap_mm_at_zero", 8.0)),
         release_side_clearance_mm=float(grip.get("release_side_clearance_mm", 7.0)),
+        stack_release_offset_mm=float(grip.get("stack_release_offset_mm", grip["place_release_offset_mm"])),
         grip_z=float(grip["grip_z"]),
         approach_height_mm=float(grip["approach_height_mm"]),
         place_release_offset_mm=float(grip["place_release_offset_mm"]),

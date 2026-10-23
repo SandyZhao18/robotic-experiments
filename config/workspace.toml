@@ -72,6 +72,9 @@ grip_z = 73.3                    # hover test: gripper z 150.3 with fingertips 8
                                  # -> fingertips 5 mm above the mat = 150.3 - 82 + 5
 approach_height_mm = 60.0        # above grip_z
 place_release_offset_mm = 2.0    # above grip_z when letting go on the mat
+# On top of another block: tower2 measured a 5 mm gap at offset +2 (3 mm more than planned) and the
+# cube fell off once; release almost touching instead (~1 mm gap).
+stack_release_offset_mm = -2.0
 travel_z = 200.0
 theta_deg = -91.0                # gripper x-axis points at 180 - theta; files point at -89.0
 

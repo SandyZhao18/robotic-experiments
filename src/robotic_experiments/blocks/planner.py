@@ -28,6 +28,7 @@ class Step:
     target: Target | None = None
     position: float | None = None  # gripper position for "release" (None: the workspace default)
     record: object | None = None  # scene.SceneBlock to record once this step succeeds
+    expect: object | None = None  # scene.SceneBlock the camera must find for "verify_placed"
 
 
 @dataclass(frozen=True)
@@ -296,7 +297,8 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
         above = grip_z + ws.approach_height_mm
         place_z = ws.grip_z + a.place_base_mm + a.grip_lift_mm
         place_above = place_z + ws.approach_height_mm
-        release_z = place_z + ws.place_release_offset_mm
+        stacked = a.place_base_mm > 0
+        release_z = place_z + (ws.stack_release_offset_mm if stacked else ws.place_release_offset_mm)
         travel = a.travel_z if a.travel_z is not None else ws.travel_z
         b = a.block
         src = f"pickup {a.pickup_square}"
@@ -322,6 +324,10 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
             Step("move", "retreat upward", b, at(a.cell_xy, place_above)),
             Step("check_released", "close fingers to confirm the block was let go", b, record=a.record),
             Step("move", "retreat to travel height", b, at(a.cell_xy, travel)),
+            # A block on top of others can still fall after a clean release: look before going on.
+            *([Step("move", "go to the safe start to look", b, Target(*ws.safe_start, ws.theta_deg)),
+               Step("verify_placed", f"camera: the block on {a.cell_square} stayed on top", b, expect=a.record)]
+              if stacked and a.record is not None else []),
         ]
     steps.append(Step("move", "return to safe start", target=Target(*ws.safe_start, ws.theta_deg)))
     _check_bounds(ws, steps)
