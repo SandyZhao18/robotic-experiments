@@ -20,6 +20,7 @@ blocks-run = "robotic_experiments.blocks.executor:main"
 record-pose = "robotic_experiments.blocks.record_pose:main"
 locate-mat = "robotic_experiments.blocks.locate_mat:main"
 check-placement = "robotic_experiments.blocks.check_placement:main"
+placement-report = "robotic_experiments.blocks.placement_report:main"
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]
