@@ -3,6 +3,7 @@
     uv run blocks-run --hover a1                      # go 150 mm above a1 and stop, to measure
     uv run blocks-run --goto 314 -392 600             # move the gripper to a point (e.g. aim the camera)
     uv run blocks-run --transfer a1 a3                # move one block from a1 to a3
+    uv run blocks-run --transfer a1 e3 c1 a7 --max-blocks 2   # several moves, in order
     uv run blocks-run --preset one                    # build a design
     uv run blocks-run --preset one --stop-after 2     # stop after step 2 (e.g. to check the approach)
 

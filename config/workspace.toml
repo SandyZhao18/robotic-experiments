@@ -49,7 +49,7 @@ travel_z = 200.0
 theta_deg = -91.0                # gripper x-axis points at 180 - theta; files point at -89.0
 
 [safe_start]
-xyz = [285.0, -250.0, 300.0]     # camera then looks down on files a-e, ranks 1-8 (for check-placement)
+xyz = [285.0, -285.0, 340.0]     # camera then looks down on files a-e, ranks 1-8 (for check-placement)
 
 [limits]
 # Every target must fall inside this box.

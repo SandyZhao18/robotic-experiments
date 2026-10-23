@@ -3,6 +3,7 @@
     uv run blocks-dry-run --preset L
     uv run blocks-dry-run --grid "#..|#..|###"
     uv run blocks-dry-run --transfer a1 a3
+    uv run blocks-dry-run --transfer a1 e3 c1 a7     # several moves, in order
     uv run blocks-dry-run --hover a1
 """
 
@@ -21,7 +22,7 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--preset", choices=sorted(PRESETS), help="built-in pattern")
     group.add_argument("--grid", help='pattern rows separated by "|", e.g. "#..|#..|###"')
-    group.add_argument("--transfer", nargs=2, metavar=("FROM", "TO"), help="move one block between squares, e.g. a1 a3")
+    group.add_argument("--transfer", nargs="+", metavar="SQUARE", help="FROM TO pairs, e.g. a1 a3 or a1 e3 c1 a7")
     group.add_argument("--hover", metavar="SQUARE", help="go above a square and stop, for measuring")
     group.add_argument("--goto", nargs=3, type=float, metavar=("X", "Y", "Z"), help="move the gripper to a point, e.g. to aim the camera")
     parser.add_argument("--hover-z", type=float, default=DEFAULT_HOVER_Z, help="gripper z for --hover (default: %(default)s)")
@@ -30,9 +31,11 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
 
 def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
     if args.transfer:
-        src, dst = args.transfer
-        workspace.parse_square(src), workspace.parse_square(dst)
-        return plan_transfer(ws, src, dst)
+        if len(args.transfer) % 2:
+            raise ValueError("--transfer takes FROM TO pairs")
+        for sq in args.transfer:
+            workspace.parse_square(sq)
+        return plan_transfer(ws, list(zip(args.transfer[::2], args.transfer[1::2])))
     if args.goto:
         return plan_goto(ws, *args.goto)
     if args.hover:

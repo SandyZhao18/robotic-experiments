@@ -183,6 +183,7 @@ def main() -> None:
 
     with LOG_PATH.open("a") as f:
         record = {**asdict(p), "placement_offset_in_use": list(ws.placement_offset_mm),
+                  "placement_gradient_in_use": [list(row) for row in ws.placement_gradient],
                   "trial": trial, "from": args.src, "color": args.color,
                   "photo": str(photo_path), "crop_px": crop, "recheck": args.recheck, "start": args.start,
                   "recorded_at": now.isoformat(timespec="seconds")}
@@ -195,10 +196,8 @@ def main() -> None:
     if args.start:
         print(f"Logged as trial {trial}'s starting position; photo {photo_path}")
         return
-    of, orank = ws.placement_offset_mm
-    print("Assuming the block was placed with the current config:")
-    print(f"  if this error is systematic, placement_offset_mm would become "
-          f"[{of - p.along_files_mm:.1f}, {orank - p.along_ranks_mm:.1f}] (now [{of:.1f}, {orank:.1f}]).")
+    cf, cr = ws.correction_at(p.square)
+    print(f"Correction in use at {p.square}: [{cf:.1f}, {cr:.1f}] mm. To refit across the mat: uv run fit-correction")
     print(f"Logged to {LOG_PATH}; photo {photo_path}")
 
 

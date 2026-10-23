@@ -45,9 +45,12 @@ class Workspace:
     h1: Vec2
     a8: Vec2
     square_size_mm: float  # measured with a ruler; cross-checks the recorded corners
-    # Correction found by placement trials, in mm along (files a->h, ranks 1->8). Applied to
-    # where the arm is sent, not to where the camera measured the mat.
+    # Correction found by placement trials, applied to where the arm is sent (not to where the
+    # camera measured the mat). In (files a->h, ranks 1->8) components, at a square whose measured
+    # center is (u, v) mm from a1's along files and ranks:
+    #     correction = placement_offset_mm + placement_gradient @ (u, v)
     placement_offset_mm: tuple[float, float]
+    placement_gradient: tuple[tuple[float, float], tuple[float, float]]
 
     grid_top_left: str  # square under design cell (row 0, col 0)
     grid_stride: int  # squares between neighbouring design cells
@@ -98,12 +101,24 @@ class Workspace:
         fs, rs = self.file_step, self.rank_step
         return (self.a1[0] + f * fs[0] + r * rs[0], self.a1[1] + f * fs[1] + r * rs[1])
 
+    def square_uv(self, name: str) -> Vec2:
+        """Measured center of a square in mm from a1's center, along (files, ranks)."""
+        f, r = parse_square(name)
+        return (f * math.hypot(*self.file_step), r * math.hypot(*self.rank_step))
+
+    def correction_at(self, name: str) -> Vec2:
+        """Placement correction at a square, in mm along (files, ranks)."""
+        u, v = self.square_uv(name)
+        (gff, gfr), (grf, grr) = self.placement_gradient
+        of, orank = self.placement_offset_mm
+        return (of + gff * u + gfr * v, orank + grf * u + grr * v)
+
     def square_xy(self, name: str) -> Vec2:
         """Where to send the gripper for this square: measured center plus the placement correction."""
         x, y = self.measured_square_xy(name)
-        of, orank = self.placement_offset_mm
+        cf, cr = self.correction_at(name)
         fu, ru = self.file_unit, self.rank_unit
-        return (x + of * fu[0] + orank * ru[0], y + of * fu[1] + orank * ru[1])
+        return (x + cf * fu[0] + cr * ru[0], y + cf * fu[1] + cr * ru[1])
 
     def cell_square(self, row: int, col: int) -> str:
         """Design rows go down the display, i.e. toward rank 1."""
@@ -188,6 +203,7 @@ def load(path: str | Path) -> Workspace:
         a8=tuple(m["a8"]),
         square_size_mm=float(m["square_size_mm"]),
         placement_offset_mm=tuple(m.get("placement_offset_mm", (0.0, 0.0))),
+        placement_gradient=tuple(tuple(row) for row in m.get("placement_gradient", ((0.0, 0.0), (0.0, 0.0)))),
         grid_top_left=g["top_left"],
         grid_stride=int(g["stride"]),
         pickup_squares=pickups,

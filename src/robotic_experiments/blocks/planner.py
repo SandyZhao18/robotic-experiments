@@ -69,15 +69,22 @@ def plan(design: Design, ws: Workspace) -> Plan:
     return Plan(design, assignments, _pick_and_place_steps(ws, assignments))
 
 
-def plan_transfer(ws: Workspace, src: str, dst: str) -> Plan:
-    """Move one block from one mat square to another, ignoring the build grid."""
+def plan_transfer(ws: Workspace, moves: list[tuple[str, str]]) -> Plan:
+    """Move blocks between mat squares, in order, ignoring the build grid."""
     problems = ws.mat_problems()
-    if src == dst:
-        problems.append("source and destination are the same square")
+    for i, (src, dst) in enumerate(moves):
+        if src == dst:
+            problems.append(f"move {i}: source and destination are the same square")
+        if dst in [d for _, d in moves[:i]] or src in [s for s, _ in moves[:i]]:
+            problems.append(f"move {i}: {src} or {dst} is already used by an earlier move")
+        if dst in [s for s, _ in moves[i + 1:]]:
+            problems.append(f"move {i}: {dst} still holds a block that a later move picks up")
     if problems:
         raise PlanError("; ".join(problems))
-    a = Assignment(0, 0, src, ws.square_xy(src), None, dst, ws.square_xy(dst))
-    return Plan(None, (a,), _pick_and_place_steps(ws, (a,)))
+    assignments = tuple(
+        Assignment(i, i, src, ws.square_xy(src), None, dst, ws.square_xy(dst)) for i, (src, dst) in enumerate(moves)
+    )
+    return Plan(None, assignments, _pick_and_place_steps(ws, assignments))
 
 
 def plan_hover(ws: Workspace, square: str, z: float) -> Plan:
