@@ -66,3 +66,22 @@ def test_edge_rotation_from_a_drawn_square(angle):
     # image y points down; mat ranks/files here are the image axes with y flipped
     rot = edge_rotation(img, mask.astype(bool), np.array([[1.0, 0.0], [0.0, -1.0]]))
     assert rot == pytest.approx((-angle + 45.0) % 90.0 - 45.0, abs=1.5)
+
+
+def test_oversized_detection_is_not_a_cube():
+    from robotic_experiments.blocks import workspace
+    from robotic_experiments.blocks.find_cubes import merge_fragments
+
+    ws = workspace.load("tests/workspace_fixture.toml")  # 40 mm blocks
+    hand = Found("orange", 7.0, 0.0, 36.0, (54, 122), (0, 0))
+    cube = Found("red", 5.0, 0.0, 0.0, (39, 40), (0, 0))
+    assert merge_fragments([hand, cube], ws) == [cube]
+
+
+def test_only_cube_height_counts_as_a_block():
+    from robotic_experiments.blocks.locate_mat import Block
+
+    mk = lambda h: Block("orange", (0, 0), np.zeros((2, 2), bool), np.zeros(3), h)
+    assert mk(30.0).cube_height
+    assert not mk(1.0).cube_height  # a light mat square under warm light
+    assert not mk(150.0).cube_height  # a hand reaching in

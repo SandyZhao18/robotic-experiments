@@ -331,12 +331,24 @@ class Capture:
     block_color: str
 
 
+# A block's top must sit about one cube above the mat (measured against the mat in the same frame,
+# so the camera's mounting offset cancels). This rejects block-colored things that are not cubes:
+# mat squares under warm light (height ~0) and hands or arms reaching in (far higher).
+CUBE_HEIGHT_RANGE_MM = (18.0, 45.0)
+
+
 @dataclass
 class Block:
     color: str
     top_px: tuple[float, float]  # top-face centroid in the image
     top_mask: np.ndarray  # top-face pixels
     world: np.ndarray  # (3,) top-face center in `world`
+    height_mm: float  # top face above the mat, as measured in this frame
+
+    @property
+    def cube_height(self) -> bool:
+        lo, hi = CUBE_HEIGHT_RANGE_MM
+        return lo <= self.height_mm <= hi
 
 
 @dataclass
@@ -383,7 +395,8 @@ async def capture_frame(machine, colors=None) -> Frame:
     on_plane = project_onto_plane(px, depths, intr)
     world = await to_world(machine, np.vstack([on_plane, block_cam]))
     lattice, blocks_w = world[: len(px)].reshape(rows, cols, 3), world[len(px):]
-    blocks = [Block(c, p, m, w) for (c, p, m, _), w in zip(tops, blocks_w)]
+    mat_z = float(lattice[..., 2].mean())
+    blocks = [Block(c, p, m, w, float(w[2]) - mat_z) for (c, p, m, _), w in zip(tops, blocks_w)]
     return Frame(bgr, corners, lattice, blocks)
 
 
@@ -391,6 +404,7 @@ async def capture(machine, color: str = "red", near: tuple[float, float] | None 
     """Measure the mat and one block. color "any" accepts every known block color; with `near`
     (world x, y) the block nearest that point is chosen, otherwise the largest blob."""
     f = await capture_frame(machine, None if color == "any" else [color])
+    f.blocks = [b for b in f.blocks if b.cube_height]  # not mat squares, hands, ...
     if not f.blocks:
         raise LocateError(f"no {'' if color == 'any' else color + ' '}block found in view")
     if near is None:

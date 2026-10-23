@@ -28,6 +28,7 @@ from robotic_experiments.connection import connect
 DEFAULT_WORKSPACE = "config/workspace.toml"
 PHOTO_DIR = Path("runs/finds")
 MIN_TOP_FRACTION = 0.6  # a detection whose top face is narrower than this x block size is a fragment
+MAX_TOP_FRACTION = 1.5  # ... or wider than this is not a single cube
 
 
 @dataclass
@@ -99,6 +100,8 @@ def locate(frame: Frame, ws: workspace.Workspace) -> list[Found]:
     gray = cv2.cvtColor(frame.bgr, cv2.COLOR_BGR2GRAY)
     out = []
     for b in frame.blocks:
+        if not b.cube_height:
+            continue  # a mat square under warm light, a hand, ...: not a cube
         f, r = to_mat @ (b.world[:2] - a1_view)
         contours, _ = cv2.findContours(b.top_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         outline = max(contours, key=cv2.contourArea).reshape(-1, 1, 2).astype(np.float32)
@@ -119,10 +122,11 @@ def local_jacobian(H: np.ndarray, px: tuple[float, float]) -> np.ndarray:
 
 
 def merge_fragments(found: list[Found], ws: workspace.Workspace) -> list[Found]:
-    """Drop detections that are not whole cubes: a top face much smaller than a cube (e.g. a
-    shaded side face picked up in another color), or one sitting on a bigger detection."""
-    min_side = MIN_TOP_FRACTION * ws.block_size_mm
-    whole = sorted((c for c in found if min(c.top_size_mm) >= min_side), key=lambda c: -c.top_size_mm[0] * c.top_size_mm[1])
+    """Drop detections that are not whole cubes: a top face much smaller or larger than a cube
+    (e.g. a shaded side face picked up in another color), or one sitting on a bigger detection."""
+    min_side, max_side = MIN_TOP_FRACTION * ws.block_size_mm, MAX_TOP_FRACTION * ws.block_size_mm
+    whole = sorted((c for c in found if min(c.top_size_mm) >= min_side and max(c.top_size_mm) <= max_side),
+                   key=lambda c: -c.top_size_mm[0] * c.top_size_mm[1])
     kept: list[Found] = []
     for c in whole:
         if all(math.dist((c.f, c.r), (k.f, k.r)) * ws.square_size_mm >= ws.block_size_mm for k in kept):
