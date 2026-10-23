@@ -80,12 +80,7 @@ def plan(design: Design, ws: Workspace, loose: list[Loose] | None = None) -> Pla
         raise PlanError("; ".join(problems))
 
     if loose is not None:
-        # Every block on the mat, chosen or not, must clear the fully open fingers at each pickup.
-        chosen = sources[: len(filled)]
-        for i, (label, _, at, turn) in enumerate(chosen):
-            for c in loose:
-                if (c.f, c.r) != at and (why := ws.finger_conflict_at(at, (c.f, c.r), ws.full_open_span_mm, c.label, turn)):
-                    problems.append(f"picking {label}: {why} - spread the blocks apart")
+        sources = _pickup_order(ws, sources, loose, len(filled), problems)
         if problems:
             raise PlanError("; ".join(problems))
 
@@ -147,6 +142,33 @@ def plan_goto(ws: Workspace, x: float, y: float, z: float) -> Plan:
     steps = (Step("move", f"go to x={x:.0f} y={y:.0f} z={z:.0f}", target=Target(x, y, z, ws.theta_deg)),)
     _check_bounds(ws, steps)
     return Plan(None, (), steps)
+
+
+def _pickup_order(ws: Workspace, sources: list, loose: list[Loose], n: int, problems: list[str]) -> list:
+    """Choose n pickable blocks and an order in which each can be picked up with the fully open
+    fingers clear of every block still on the supply area (blocks already picked are gone).
+
+    Greedy: repeatedly take the first block (in the given order) that is clear right now.
+    """
+    remaining = list(sources)
+    on_mat = [(c.f, c.r, c.label) for c in loose]
+    order = []
+
+    def blockers(src):
+        label, _, at, turn = src
+        return [why for f, r, other in on_mat
+                if (f, r) != at and (why := ws.finger_conflict_at(at, (f, r), ws.full_open_span_mm, other, turn))]
+
+    while len(order) < n:
+        nxt = next((s for s in remaining if not blockers(s)), None)
+        if nxt is None:
+            for s in remaining:
+                problems += [f"picking {s[0]}: {why} - spread the blocks apart" for why in blockers(s)]
+            return order
+        order.append(nxt)
+        remaining.remove(nxt)
+        on_mat = [m for m in on_mat if (m[0], m[1]) != nxt[2]]
+    return order
 
 
 MIN_TURN_DEG = 2.0  # smaller twists are grabbed at the usual wrist angle

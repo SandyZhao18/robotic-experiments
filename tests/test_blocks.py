@@ -214,3 +214,19 @@ def test_turned_fingers_change_which_neighbours_are_in_the_way():
     # neighbour one square away along the files: beside the usual fingers, in front of fingers turned 90
     assert ws.finger_conflict_at((6.0, 1.0), (5.0, 1.0), 100.0, "n") is None
     assert ws.finger_conflict_at((6.0, 1.0), (5.0, 1.0), 100.0, "n", turn_deg=90.0)
+
+
+def test_pickup_order_avoids_neighbours_that_are_already_gone():
+    from robotic_experiments.blocks.planner import Loose
+
+    ws = dataclasses.replace(WS, theta_deg=-91.0)
+    # diagonal neighbours: square a is clear of b, but b is twisted so its fingers open toward a.
+    # b is listed first; picking a first makes b clear.
+    a, b = Loose("a", 6.0, 1.0), Loose("b", 6.9, 1.6, rotation_deg=-35.0)
+    assert ws.finger_conflict_at((6.9, 1.6), (6.0, 1.0), ws.full_open_span_mm, "a", -35.0)
+    assert not ws.finger_conflict_at((6.0, 1.0), (6.9, 1.6), ws.full_open_span_mm, "b", 0.0)
+    p = plan(Design.parse("...|...|##."), ws, [b, a])
+    assert [x.pickup_square for x in p.assignments] == ["a", "b"]
+    # mutual conflict: neither order works
+    with pytest.raises(PlanError, match="spread the blocks apart"):
+        plan(Design.parse("...|...|##."), ws, [Loose("a", 6.0, 1.0), Loose("b", 6.0, 1.9)])
