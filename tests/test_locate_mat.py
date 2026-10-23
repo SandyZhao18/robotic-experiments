@@ -29,7 +29,6 @@ def test_fit_recovers_board_in_any_orientation(yaw):
     assert fit.a1 == pytest.approx(tuple(A1))
     assert math.dist(fit.h1, fit.a1) == pytest.approx(7 * SQUARE)
     assert fit.file_yaw_deg == pytest.approx(yaw if yaw != -180 else 180)
-    assert fit.block_height_mm == pytest.approx(30.0)
 
 
 @pytest.mark.parametrize("flip_rows,flip_cols,transpose", [(1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1), (1, 0, 1)])

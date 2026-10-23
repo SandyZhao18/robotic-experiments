@@ -6,6 +6,9 @@
 calibrated = false
 frame = "world"
 
+[table]
+z = -38.0                        # table top in world. Every height below is relative to this.
+
 [mat]
 # 8x8 chess mat, squares named from white's side: files a..h left to right, ranks 1..8 bottom to top.
 # Record each with a block held centered in that square: `uv run record-pose mat_a1` etc.
@@ -13,6 +16,7 @@ a1 = [300.0,  200.0]
 h1 = [300.0, -199.0]
 a8 = [699.0,  200.0]
 square_size_mm = 57.0            # measured with a ruler; cross-checks the corners above
+thickness_mm = 3.0               # mat surface = table z + thickness  (MEASURE)
 
 [grid]
 # 3x3 build area. The design displays exactly as the board looks from white's side.
@@ -24,12 +28,12 @@ stride = 2                       # 2 = every other square, leaves room for the o
 squares = ["a1", "c1", "e1", "g1", "a3"]
 
 [block]
-size_mm = 40.0
+size_mm = 30.0                   # red cube, 30 x 30 x 30
 
 [gripper]
 open_finger_span_mm = 100.0      # outer width across the open fingers
 finger_clearance_mm = 10.0       # extra margin beside neighbouring blocks
-grip_z = 0.0                     # gripper-frame z with fingers around a block on the mat
+grip_z = -5.0                    # gripper-frame z with fingers around a block (block center is at mat + 15)
 approach_height_mm = 60.0        # above grip_z
 place_release_offset_mm = 2.0    # above grip_z when letting go on the mat
 travel_z = 200.0
@@ -39,7 +43,7 @@ theta_deg = 0.0                  # finger alignment about the downward tool axis
 xyz = [350.0, 0.0, 300.0]
 
 [limits]
-# Every target must fall inside this box. Table top is at z = -38 in world.
+# Every target must fall inside this box.
 min_xyz = [250.0, -250.0, -30.0]
 max_xyz = [750.0,  250.0, 600.0]
 required_obstacles = ["table", "wall-front", "wall-side", "ceiling"]

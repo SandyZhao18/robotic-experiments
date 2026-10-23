@@ -37,6 +37,9 @@ class Workspace:
     calibrated: bool
     frame: str
 
+    table_z: float  # table top in world: the reference every height is measured from
+    mat_thickness_mm: float
+
     # Recorded centers of three corner squares.
     a1: Vec2
     h1: Vec2
@@ -63,6 +66,10 @@ class Workspace:
 
     required_obstacles: tuple[str, ...]
     arrival_tolerance_mm: float
+
+    @property
+    def mat_top_z(self) -> float:
+        return self.table_z + self.mat_thickness_mm
 
     @property
     def file_step(self) -> Vec2:
@@ -126,6 +133,8 @@ class Workspace:
                     out.append(f"pickup {i} ({s}) is {math.dist(p, q):.1f} mm from {label}, need {needed:.1f} mm")
             named.append((f"pickup {i} ({s})", p))
 
+        if self.grip_z <= self.mat_top_z:
+            out.append(f"grip_z {self.grip_z} is at or below the mat surface (z = {self.mat_top_z})")
         if self.travel_z < self.grip_z + self.approach_height_mm:
             out.append("travel_z must be at or above grip_z + approach_height_mm")
         if self.approach_height_mm < self.block_size_mm:
@@ -143,6 +152,8 @@ def load(path: str | Path) -> Workspace:
     return Workspace(
         calibrated=bool(d.get("calibrated", False)),
         frame=d.get("frame", "world"),
+        table_z=float(d["table"]["z"]),
+        mat_thickness_mm=float(m["thickness_mm"]),
         a1=tuple(m["a1"]),
         h1=tuple(m["h1"]),
         a8=tuple(m["a8"]),

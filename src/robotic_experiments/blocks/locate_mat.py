@@ -5,8 +5,9 @@ whole board, but must see the a1 corner), then:
 
     uv run locate-mat
 
-It finds the chessboard's inner corners in the color image, projects them onto the mat
-plane fitted from depth, converts them to `world`, and fits the board. The red block marks
+It finds the chessboard's inner corners in the color image, traces each one's line of sight
+in `world` down to the mat surface (table z + mat thickness, from the workspace config), and
+fits the board. Depth is used only as a cross-check of the camera's height above the mat. The red block marks
 a1; standard board handedness (files left->right, ranks bottom->top from white's side)
 fixes which direction is files. Results go to config/mat_calibration.json together with
 an annotated image to check by eye against the printed labels.
@@ -26,6 +27,7 @@ from viam.components.arm import Arm
 from viam.components.camera import Camera
 from viam.proto.common import Pose, PoseInFrame
 
+from robotic_experiments.blocks import workspace
 from robotic_experiments.connection import connect
 
 ARM = "arm"
@@ -35,6 +37,8 @@ OUT_JSON = Path("config/mat_calibration.json")
 OUT_IMAGE = Path("config/mat_calibration.jpg")
 PATTERNS = [(7, 7), (7, 6), (6, 7), (7, 5), (5, 7), (6, 6), (6, 5), (5, 6), (5, 5)]
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
+DEPTH_DISAGREEMENT_WARN_MM = 10.0
+DEFAULT_WORKSPACE = "config/workspace.toml"
 
 
 class LocateError(Exception):
@@ -113,9 +117,6 @@ class MatFit:
     a8: tuple[float, float]
     square_size_mm: float
     file_yaw_deg: float  # direction a1 -> h1, measured from world +x toward +y
-    mat_z: float
-    block_top_z: float
-    block_height_mm: float
     block_xy: tuple[float, float]
     block_offset_from_a1_mm: float
     residual_rms_mm: float
@@ -141,7 +142,7 @@ def orient_lattice(world: np.ndarray, block_xy: np.ndarray) -> np.ndarray:
 
 
 def fit_board(world: np.ndarray, block_world: np.ndarray) -> MatFit:
-    """world: (rows, cols, 3) inner corners in `world`; block_world: block top center."""
+    """world: (rows, cols, 3) inner corners in `world`; block_world: block top center. Only x/y are used."""
     block_xy = block_world[:2]
     lat = orient_lattice(world, block_xy)
     ranks, files = lat.shape[:2]
@@ -175,16 +176,12 @@ def fit_board(world: np.ndarray, block_world: np.ndarray) -> MatFit:
     if problems:
         raise LocateError("; ".join(problems))
 
-    mat_z = float(lat[..., 2].mean())
     return MatFit(
         a1=tuple(map(float, a1)),
         h1=tuple(map(float, center(7, 0))),
         a8=tuple(map(float, center(0, 7))),
         square_size_mm=float((size_f + size_r) / 2),
         file_yaw_deg=math.degrees(math.atan2(fs[1], fs[0])),
-        mat_z=mat_z,
-        block_top_z=float(block_world[2]),
-        block_height_mm=float(block_world[2]) - mat_z,
         block_xy=tuple(map(float, block_xy)),
         block_offset_from_a1_mm=offset,
         residual_rms_mm=residual,
@@ -233,7 +230,24 @@ async def to_world(machine, pts_cam: np.ndarray) -> np.ndarray:
     return np.array(out)
 
 
-async def capture_and_fit() -> tuple[MatFit, np.ndarray]:
+async def to_plane(machine, ray_dirs: np.ndarray, plane_z: float) -> np.ndarray:
+    """Intersect camera rays (camera frame, z = 1) with the horizontal plane z = plane_z in `world`."""
+    ends = await to_world(machine, np.vstack([[0.0, 0.0, 0.0], ray_dirs * 500.0]))
+    origin, far = ends[0], ends[1:]
+    t = (plane_z - origin[2]) / (far[:, 2] - origin[2])
+    return origin + t[:, None] * (far - origin)
+
+
+@dataclass
+class DepthCheck:
+    """What depth alone says, compared with the configured table. Diagnostic only."""
+
+    mat_z: float
+    disagreement_mm: float  # depth-measured mat z minus configured mat z
+    block_height_mm: float
+
+
+async def capture_and_fit(ws: workspace.Workspace) -> tuple[MatFit, DepthCheck, np.ndarray]:
     async with await connect() as machine:
         if await Arm.from_robot(machine, ARM).is_moving():
             raise LocateError("arm is moving; wait for it to stop")
@@ -253,36 +267,58 @@ async def capture_and_fit() -> tuple[MatFit, np.ndarray]:
         corners = find_corners(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
         rows, cols = corners.shape[:2]
         px = corners.reshape(-1, 2)
-        depths = np.array([sample_depth(depth, u, v) for u, v in px])
-        on_plane = project_onto_plane(px, depths, intr)
-
         block_px = find_red_block(bgr)
-        block_cam = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
 
-        world = (await to_world(machine, np.vstack([on_plane, block_cam]))).astype(float)
-    world_lattice = world[:-1].reshape(rows, cols, 3)
-    fit = fit_board(world_lattice, world[-1])
-    image = annotate(bgr, corners, world_lattice, block_px, world[-1][:2])
-    return fit, image
+        # Positions: line of sight to the known surfaces.
+        world_corners = await to_plane(machine, rays(px, *intr), ws.mat_top_z)
+        block_world = (await to_plane(machine, rays(np.array([block_px]), *intr), ws.mat_top_z + ws.block_size_mm))[0]
+
+        # Cross-check: where depth alone puts the mat and the block top.
+        depths = np.array([sample_depth(depth, u, v) for u, v in px])
+        depth_mat_center = project_onto_plane(px, depths, intr).mean(axis=0)
+        depth_block = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
+        depth_mat_z, depth_block_z = (await to_world(machine, np.vstack([depth_mat_center, depth_block])))[:, 2]
+
+    world_lattice = world_corners.reshape(rows, cols, 3)
+    fit = fit_board(world_lattice, block_world)
+    check = DepthCheck(
+        mat_z=float(depth_mat_z),
+        disagreement_mm=float(depth_mat_z - ws.mat_top_z),
+        block_height_mm=float(depth_block_z - depth_mat_z),
+    )
+    image = annotate(bgr, corners, world_lattice, block_px, block_world[:2])
+    return fit, check, image
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.parse_args()
+    parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
+    args = parser.parse_args()
+    ws = workspace.load(args.workspace)
     try:
-        fit, image = asyncio.run(capture_and_fit())
+        fit, check, image = asyncio.run(capture_and_fit(ws))
     except LocateError as e:
         raise SystemExit(f"Could not locate the mat: {e}")
 
-    OUT_JSON.write_text(json.dumps({**asdict(fit), "recorded_at": datetime.now().isoformat(timespec="seconds")}, indent=2) + "\n")
+    OUT_JSON.write_text(json.dumps({
+        **asdict(fit),
+        "mat_top_z": ws.mat_top_z,
+        "depth_check": asdict(check),
+        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+    }, indent=2) + "\n")
     cv2.imwrite(str(OUT_IMAGE), image)
-    print(f"Mat located from {fit.corners_used} corners (fit residual {fit.residual_rms_mm:.2f} mm):")
+    print(f"Mat located from {fit.corners_used} corners (fit residual {fit.residual_rms_mm:.2f} mm),")
+    print(f"on the mat surface z = {ws.mat_top_z:.1f} (table {ws.table_z:.1f} + mat {ws.mat_thickness_mm:.1f}):")
     print(f"  a1 = [{fit.a1[0]:.1f}, {fit.a1[1]:.1f}]")
     print(f"  h1 = [{fit.h1[0]:.1f}, {fit.h1[1]:.1f}]")
     print(f"  a8 = [{fit.a8[0]:.1f}, {fit.a8[1]:.1f}]")
     print(f"  square size {fit.square_size_mm:.1f} mm, files point {fit.file_yaw_deg:.1f}° from world +x")
-    print(f"  mat surface z = {fit.mat_z:.1f}, block top z = {fit.block_top_z:.1f} -> block height {fit.block_height_mm:.1f} mm")
     print(f"  block is {fit.block_offset_from_a1_mm:.1f} mm from the computed a1 center")
+    print(f"Depth check: depth puts the mat at z = {check.mat_z:.1f} ({check.disagreement_mm:+.1f} mm vs config), "
+          f"block height {check.block_height_mm:.1f} mm")
+    if abs(check.disagreement_mm) > DEPTH_DISAGREEMENT_WARN_MM:
+        print(f"  WARNING: depth and the configured table disagree by {abs(check.disagreement_mm):.0f} mm. Either the table z "
+              "or the camera's mounting offset is wrong, and x/y above inherit that error. Resolve before trusting them.")
     print(f"Saved {OUT_JSON} and {OUT_IMAGE} — check the square labels in the image match the mat.")
 
 
