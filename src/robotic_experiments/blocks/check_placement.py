@@ -1,6 +1,7 @@
 """Measure where the red block sits relative to a square's center. Read-only: never moves the robot.
 
-    uv run check-placement a3 --from a1
+    uv run check-placement a1 --start      # where the block starts, before a trial
+    uv run check-placement a3 --from a1    # where it landed, after the trial
 
 The block and the chessboard corners are measured in the same camera frame, so errors in the
 camera's mounting offset cancel out: the result is the block's physical offset on the mat.
@@ -81,17 +82,25 @@ def measure(world_lattice: np.ndarray, block_xy, ws: workspace.Workspace, square
     )
 
 
+def is_trial(record: dict) -> bool:
+    return not record.get("recheck") and not record.get("start")
+
+
 def trial_number(recheck: bool) -> int:
-    """Next trial number from the log; a recheck reuses the latest trial's number."""
+    """Number of the trial this check belongs to.
+
+    A result starts a new trial; a recheck belongs to the latest trial; a start measurement
+    belongs to the trial about to run.
+    """
     trials = 0
     if LOG_PATH.exists():
-        trials = sum(1 for line in LOG_PATH.read_text().splitlines() if line.strip() and not json.loads(line).get("recheck"))
+        trials = sum(1 for line in LOG_PATH.read_text().splitlines() if line.strip() and is_trial(json.loads(line)))
     return max(trials, 1) if recheck else trials + 1
 
 
-def photo_name(trial: int, recheck: bool, src: str | None, p: Placement, when: datetime) -> str:
+def photo_name(trial: int, kind: str, src: str | None, p: Placement, when: datetime) -> str:
     move = f"{src}-to-{p.square}" if src else f"on-{p.square}"
-    tag = f"trial-{trial:02d}{'-recheck' if recheck else ''}"
+    tag = f"trial-{trial:02d}{'-' + kind if kind else ''}"
     return f"{tag}_{move}_{p.distance_mm:.1f}mm_{when:%Y-%m-%d_%H%M%S}.jpg"
 
 
@@ -144,7 +153,9 @@ def main() -> None:
     parser.add_argument("square", help="the square the block should be on, e.g. a3")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
     parser.add_argument("--from", dest="src", metavar="SQUARE", help="where the block was picked up (for naming)")
-    parser.add_argument("--recheck", action="store_true", help="re-measuring a block already logged (not a new trial)")
+    kind = parser.add_mutually_exclusive_group()
+    kind.add_argument("--recheck", action="store_true", help="re-measuring a block already logged (not a new trial)")
+    kind.add_argument("--start", action="store_true", help="where the block starts, before the next trial")
     args = parser.parse_args()
     ws = workspace.load(args.workspace)
     try:
@@ -156,21 +167,25 @@ def main() -> None:
     now = datetime.now()
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     trial = trial_number(args.recheck)
-    photo_path = PHOTO_DIR / photo_name(trial, args.recheck, args.src, p, now)
+    tag = "recheck" if args.recheck else "start" if args.start else ""
+    photo_path = PHOTO_DIR / photo_name(trial, tag, args.src, p, now)
     cv2.imwrite(str(photo_path), photo)
 
     with LOG_PATH.open("a") as f:
         record = {**asdict(p), "placement_offset_in_use": list(ws.placement_offset_mm),
                   "trial": trial, "from": args.src,
-                  "photo": str(photo_path), "crop_px": crop, "recheck": args.recheck,
+                  "photo": str(photo_path), "crop_px": crop, "recheck": args.recheck, "start": args.start,
                   "recorded_at": now.isoformat(timespec="seconds")}
         f.write(json.dumps(record) + "\n")
 
-    of, orank = ws.placement_offset_mm
-    print(f"Trial {trial}{' (recheck)' if args.recheck else ''}: block is {p.distance_mm:.1f} mm from the center of {p.square}:")
+    print(f"Trial {trial}{f' ({tag})' if tag else ''}: block is {p.distance_mm:.1f} mm from the center of {p.square}:")
     print(f"  {p.along_files_mm:+.1f} mm along files (+ = toward h)")
     print(f"  {p.along_ranks_mm:+.1f} mm along ranks (+ = toward rank 8)")
     print(f"  ({p.corners_used} corners; this view's mat is {p.view_shift_mm:.1f} mm from the configured one)")
+    if args.start:
+        print(f"Logged as trial {trial}'s starting position; photo {photo_path}")
+        return
+    of, orank = ws.placement_offset_mm
     print("Assuming the block was placed with the current config:")
     print(f"  if this error is systematic, placement_offset_mm would become "
           f"[{of - p.along_files_mm:.1f}, {orank - p.along_ranks_mm:.1f}] (now [{of:.1f}, {orank:.1f}]).")

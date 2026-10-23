@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from robotic_experiments.blocks.check_placement import LOG_PATH, PHOTO_DIR
+from robotic_experiments.blocks.check_placement import LOG_PATH, PHOTO_DIR, is_trial
 
 PLOT = 520  # px, scatter plot size
 TILE = 260  # px, photo crop size
@@ -27,7 +27,11 @@ def load(square: str | None) -> list[dict]:
     if not LOG_PATH.exists():
         raise SystemExit(f"No trials logged yet ({LOG_PATH}).")
     recs = [json.loads(line) for line in LOG_PATH.read_text().splitlines() if line.strip()]
-    recs = [r for r in recs if not r.get("recheck") and (square is None or r["square"] == square)]
+    starts = {r["trial"]: r for r in recs if r.get("start")}
+    recs = [r for r in recs if is_trial(r) and (square is None or r["square"] == square)]
+    for r in recs:
+        if r.get("trial") in starts:
+            r["start_at"] = starts[r["trial"]]
     if not recs:
         raise SystemExit("No matching trials.")
     return recs
@@ -104,12 +108,14 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out), np.hstack([pad(left), pad(right)]))
 
-    print(f"{'#':>2}  {'square':6} {'files':>7} {'ranks':>7} {'dist':>6}  correction   when")
+    print(f"{'#':>2}  {'square':6} {'files':>7} {'ranks':>7} {'dist':>6}  {'start (files, ranks)':>21}  correction   when")
     for i, r in enumerate(recs, 1):
         i = r.get("trial", i)
         corr = r.get("placement_offset_in_use", [0, 0])
+        st = r.get("start_at")
+        start = f"{st['square']} {st['along_files_mm']:+5.1f}, {st['along_ranks_mm']:+5.1f}" if st else "-"
         print(f"{i:>2}  {r['square']:6} {r['along_files_mm']:+7.1f} {r['along_ranks_mm']:+7.1f} {r['distance_mm']:6.1f}"
-              f"  [{corr[0]:.1f}, {corr[1]:.1f}]  {r['recorded_at']}")
+              f"  {start:>21}  [{corr[0]:.1f}, {corr[1]:.1f}]  {r['recorded_at']}")
     current = [r for r in recs if r.get("placement_offset_in_use") == recs[-1].get("placement_offset_in_use")]
     if len(current) >= 2:
         f = np.array([r["along_files_mm"] for r in current])
