@@ -41,6 +41,7 @@ _SHAPES = [(7, 7), (7, 6), (6, 6), (7, 5), (6, 5), (7, 4), (5, 5), (6, 4), (7, 3
 PATTERNS = [p for a, b in _SHAPES for p in ((a, b), (b, a)) if a != b or p == (a, b)]
 PATTERNS = list(dict.fromkeys(sorted(PATTERNS, key=lambda p: -p[0] * p[1])))
 DEPTH_WINDOW = 3  # half-size of the window used to sample depth around a pixel
+TOP_FACE_TOLERANCE_MM = 6.0  # red pixels this close to the nearest red surface count as the top face
 DEPTH_DISAGREEMENT_WARN_MM = 10.0
 SQUARE_SIZE_TOLERANCE_MM = 1.5
 DEFAULT_WORKSPACE = "config/workspace.toml"
@@ -70,20 +71,45 @@ def find_corners(gray: np.ndarray) -> np.ndarray:
     raise LocateError("no chessboard corners found; is the mat in view and well lit?")
 
 
-def find_red_block(bgr: np.ndarray) -> tuple[float, float]:
-    """Pixel centroid of the largest red blob."""
+def red_block_mask(bgr: np.ndarray) -> np.ndarray:
+    """Boolean mask of the largest red blob."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     # The mat's wood squares and skin are reddish too but duller (S <= ~140, dark squares V <= ~60);
     # the block measures S 170-240 depending on lighting.
     mask = cv2.inRange(hsv, (0, 150, 90), (8, 255, 255)) | cv2.inRange(hsv, (170, 150, 90), (180, 255, 255))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    n, _, stats, centroids = cv2.connectedComponentsWithStats(mask)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     if n < 2:
         raise LocateError("no red block found in view; put it on a1")
     i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
     if stats[i, cv2.CC_STAT_AREA] < 300:
         raise LocateError("red blob too small to be the block")
-    return float(centroids[i][0]), float(centroids[i][1])
+    return labels == i
+
+
+def find_red_block(bgr: np.ndarray) -> tuple[float, float]:
+    """Pixel centroid of the largest red blob (top face plus any visible side faces)."""
+    v, u = np.nonzero(red_block_mask(bgr))
+    return float(u.mean()), float(v.mean())
+
+
+def find_block_top(bgr: np.ndarray, depth: np.ndarray) -> tuple[tuple[float, float], float]:
+    """Pixel centroid and depth of the block's top face.
+
+    Seen at an angle, the red blob includes side faces, which pull its centroid sideways.
+    The top face is the red surface nearest the camera, so keep only red pixels within
+    TOP_FACE_TOLERANCE_MM of the nearest red depth.
+    """
+    mask = cv2.erode(red_block_mask(bgr).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)  # drop mixed edge pixels
+    d = np.where(mask & (depth > 0), depth, np.nan)
+    if np.isnan(d).all():
+        raise LocateError("no depth on the red block")
+    nearest = np.nanpercentile(d, 5)
+    top = d <= nearest + TOP_FACE_TOLERANCE_MM
+    if top.sum() < 100:
+        raise LocateError("too few top-face pixels on the block")
+    v, u = np.nonzero(top)
+    return (float(u.mean()), float(v.mean())), float(np.median(d[top]))
 
 
 def sample_depth(depth: np.ndarray, u: float, v: float) -> float:
@@ -274,11 +300,11 @@ async def capture(machine) -> Capture:
     corners = find_corners(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY))
     rows, cols = corners.shape[:2]
     px = corners.reshape(-1, 2)
-    block_px = find_red_block(bgr)
+    block_px, block_depth = find_block_top(bgr, depth)
 
     depths = np.array([sample_depth(depth, u, v) for u, v in px])
     on_plane = project_onto_plane(px, depths, intr)
-    block_cam = rays(np.array([block_px]), *intr)[0] * sample_depth(depth, *block_px)
+    block_cam = rays(np.array([block_px]), *intr)[0] * block_depth
     world = await to_world(machine, np.vstack([on_plane, block_cam]))
     return Capture(bgr, corners, world[:-1].reshape(rows, cols, 3), block_px, world[-1])
 

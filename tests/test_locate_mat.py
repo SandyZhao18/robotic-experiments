@@ -62,3 +62,20 @@ def test_refuses_noisy_fit():
     lat[3, 3, :2] += 15.0
     with pytest.raises(LocateError, match="residual"):
         fit_board(lat, block_on_a1())
+
+
+def test_block_top_ignores_visible_side_face():
+    from robotic_experiments.blocks.locate_mat import find_block_top, find_red_block
+
+    bgr = np.full((200, 200, 3), (120, 160, 200), np.uint8)  # mat-ish, not saturated red
+    depth = np.full((200, 200), 450.0)
+    bgr[80:140, 80:140] = (0, 0, 230)  # top face: 60x60 px, centered at (109.5, 109.5)
+    depth[80:140, 80:140] = 420.0
+    bgr[80:140, 60:80] = (0, 0, 200)  # side face seen at an angle, farther away
+    depth[80:140, 60:80] = np.linspace(422.0, 448.0, 20)[None, :][:, ::-1]
+    (u, v), d = find_block_top(bgr, depth)
+    # The side face's strip nearest the top edge is within the depth tolerance, so a sliver
+    # (~2 px of a 60 px face, ~1 mm on the real cube) still counts; the whole blob is ~10 px off.
+    assert (u, v) == pytest.approx((109.5, 109.5), abs=2.5)
+    assert d == pytest.approx(420.0)
+    assert find_red_block(bgr)[0] < 105  # the whole blob is pulled toward the side face
