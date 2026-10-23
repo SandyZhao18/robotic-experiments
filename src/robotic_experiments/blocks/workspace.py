@@ -57,9 +57,12 @@ class Workspace:
     pickup_squares: tuple[str, ...]  # used in this order
 
     block_size_mm: float
-    open_finger_span_mm: float  # outer width of the open fingers (at open_position, if set)
+    open_finger_span_mm: float  # outer width of the fingers when releasing (at open_position, if set)
     finger_clearance_mm: float  # extra gap required beside neighbouring blocks
-    open_position: float | None  # gripper position (0 closed .. ~850 fully open) for open/release; None = fully open
+    # Gripper position (0 closed .. ~850 fully open) used to RELEASE a block; None = fully open.
+    # Picking up always opens fully, so a block that is a few mm off its pickup square still fits.
+    open_position: float | None
+    full_open_span_mm: float  # outer width of the fully open fingers (used around pickups)
 
     grip_z: float  # gripper-frame z when the fingers are around a block on the mat
     approach_height_mm: float  # above grip_z, for approach and retreat
@@ -76,8 +79,13 @@ class Workspace:
 
     @property
     def min_neighbour_spacing_mm(self) -> float:
-        """Closest two block centers may be so the open fingers clear a neighbour."""
+        """Closest a neighbouring block may be to where a block is released."""
         return (self.block_size_mm + self.open_finger_span_mm) / 2 + self.finger_clearance_mm
+
+    @property
+    def min_pickup_spacing_mm(self) -> float:
+        """Closest a neighbouring block may be to where a block is picked up (fingers fully open)."""
+        return (self.block_size_mm + self.full_open_span_mm) / 2 + self.finger_clearance_mm
 
     @property
     def mat_top_z(self) -> float:
@@ -180,14 +188,15 @@ class Workspace:
             out.append(f"build grid pitch {pitch:.1f} mm is too tight: open fingers beside a placed block need {needed:.1f} mm")
 
         named = [(f"build square {s}", self.square_xy(s)) for s in sorted(cells)]
+        pickup_needed = self.min_pickup_spacing_mm
         for i, s in enumerate(self.pickup_squares):
             if s in cells:
                 out.append(f"pickup {i} ({s}) is inside the build grid")
                 continue
             p = self.square_xy(s)
             for label, q in named:
-                if math.dist(p, q) < needed:
-                    out.append(f"pickup {i} ({s}) is {math.dist(p, q):.1f} mm from {label}, need {needed:.1f} mm")
+                if math.dist(p, q) < pickup_needed:
+                    out.append(f"pickup {i} ({s}) is {math.dist(p, q):.1f} mm from {label}, need {pickup_needed:.1f} mm")
             named.append((f"pickup {i} ({s})", p))
         return out
 
@@ -217,6 +226,7 @@ def load(path: str | Path) -> Workspace:
         open_finger_span_mm=float(grip["open_finger_span_mm"]),
         finger_clearance_mm=float(grip["finger_clearance_mm"]),
         open_position=float(grip["open_position"]) if "open_position" in grip else None,
+        full_open_span_mm=float(grip.get("full_open_span_mm", grip["open_finger_span_mm"])),
         grip_z=float(grip["grip_z"]),
         approach_height_mm=float(grip["approach_height_mm"]),
         place_release_offset_mm=float(grip["place_release_offset_mm"]),

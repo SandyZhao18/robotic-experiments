@@ -39,6 +39,7 @@ ARM = "arm"
 GRIPPER = "gripper"
 MOTION = "builtin"
 MIN_UNCALIBRATED_HOVER_MM = 150.0  # gripper frame above the mat surface
+VERTICAL_XY_TOLERANCE_MM = 3.0  # moves that change x/y less than this are straight up/down
 
 STRAIGHT_LINE = Constraints(linear_constraint=[LinearConstraint(line_tolerance_mm=2.0, orientation_tolerance_degs=2.0)])
 
@@ -100,7 +101,7 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
     gripper = Gripper.from_robot(machine, GRIPPER)
     if s.kind == "move":
         t = s.target
-        vertical = prev is not None and (prev.x, prev.y) == (t.x, t.y)
+        vertical = prev is not None and math.dist((prev.x, prev.y), (t.x, t.y)) <= VERTICAL_XY_TOLERANCE_MM
         motion = MotionClient.from_robot(machine, MOTION)
         ok = await bounded(
             motion.move(
@@ -118,7 +119,9 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
         err = math.dist((p.x, p.y, p.z), (t.x, t.y, t.z))
         if err > ws.arrival_tolerance_mm:
             raise Abort(f"{s.label}: ended {err:.1f} mm from target (tolerance {ws.arrival_tolerance_mm} mm)")
-    elif s.kind in ("open", "release"):
+    elif s.kind == "open":  # before a pickup: fully open, so an off-center block still fits
+        await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
+    elif s.kind == "release":
         if ws.open_position is None:
             await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
         else:
@@ -171,7 +174,10 @@ async def execute(p: Plan, ws, stop_after: int | None, move_timeout: float, grip
             print("Not confirmed. Nothing moved.")
             return 1
 
-        prev = None
+        # Start from where the gripper actually is, so a first move straight up or down is
+        # also kept to a vertical line.
+        here = await gripper_pose(machine, ws.frame)
+        prev = Target(here.x, here.y, here.z, here.theta)
         i = -1
         try:
             for i, s in enumerate(p.steps[: last + 1]):

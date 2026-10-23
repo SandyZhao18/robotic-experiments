@@ -80,16 +80,18 @@ def plan_transfer(ws: Workspace, moves: list[tuple[str, str]]) -> Plan:
             problems.append(f"move {i}: {src} or {dst} is already used by an earlier move")
         if dst in [s for s, _ in moves[i + 1:]]:
             problems.append(f"move {i}: {dst} still holds a block that a later move picks up")
-    # Every placed block, and every block still waiting, must clear the open fingers at each drop.
-    for i, (_, dst) in enumerate(moves):
+    # Every placed block, and every block still waiting, must clear the open fingers: fully open
+    # at each pickup, partly open (open_position) at each drop.
+    for i, (src, dst) in enumerate(moves):
         neighbours = [d for _, d in moves[:i]] + [s for s, _ in moves[i + 1:]]
-        for n in neighbours:
-            gap = math.dist(ws.measured_square_xy(dst), ws.measured_square_xy(n))
-            if gap < ws.min_neighbour_spacing_mm:
-                problems.append(
-                    f"move {i}: {dst} is {gap:.0f} mm from the block on {n}; open fingers need "
-                    f"{ws.min_neighbour_spacing_mm:.0f} mm (set a smaller gripper open_position?)"
-                )
+        for square, needed, what in ((src, ws.min_pickup_spacing_mm, "pickup"), (dst, ws.min_neighbour_spacing_mm, "drop")):
+            for n in neighbours:
+                gap = math.dist(ws.measured_square_xy(square), ws.measured_square_xy(n))
+                if gap < needed:
+                    problems.append(
+                        f"move {i}: {what} {square} is {gap:.0f} mm from the block on {n}; "
+                        f"open fingers need {needed:.0f} mm"
+                    )
     if problems:
         raise PlanError("; ".join(problems))
     assignments = tuple(
@@ -115,7 +117,7 @@ def plan_hover(ws: Workspace, square: str, z: float) -> Plan:
 
 def plan_open_gripper() -> Plan:
     """Only open the fingers (to the configured open_position), e.g. to measure the gap."""
-    return Plan(None, (), (Step("open", "open fingers to the configured position"),))
+    return Plan(None, (), (Step("release", "open fingers to the configured release position"),))
 
 
 def plan_goto(ws: Workspace, x: float, y: float, z: float) -> Plan:
