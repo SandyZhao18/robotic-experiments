@@ -27,8 +27,31 @@ from robotic_experiments.connection import connect
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
 PHOTO_DIR = Path("runs/finds")
-MIN_TOP_FRACTION = 0.6  # a detection whose top face is narrower than this x block size is a fragment
-MAX_TOP_FRACTION = 1.5  # ... or wider than this is not a single cube
+# Telling shapes apart from the top face (mm) and the height above the mat (mm):
+#   cube 30x30 at 30, brick 60x30 at 30, cylinder 30 across at 60.
+FIND_HEIGHT_RANGE_MM = (18.0, 75.0)
+TALL_MM = 45.0  # taller than this: a cylinder
+LONG_MM = 45.0  # a top longer than this: a brick
+MIN_SIDE_MM = 18.0  # narrower: a fragment (e.g. a shaded side face seen in another color)
+MAX_SIDE_MM = 80.0  # longer: not a block (a hand, an arm, ...)
+
+
+def classify(size: tuple[float, float], height_mm: float) -> str | None:
+    """cube | brick | cylinder, or None for something that is not a whole block."""
+    short, long = sorted(size)
+    if short < MIN_SIDE_MM or long > MAX_SIDE_MM:
+        return None
+    if height_mm > TALL_MM:
+        return "cylinder" if long <= LONG_MM else None
+    return "brick" if long > LONG_MM else "cube"
+
+
+def long_axis(points_mm: np.ndarray) -> str:
+    """'files' or 'ranks': which mat axis an outline's long side is closer to (u = files, v = ranks)."""
+    pts = points_mm - points_mm.mean(axis=0)
+    _, _, vt = np.linalg.svd(pts, full_matrices=False)
+    du, dv = vt[0]
+    return "files" if abs(du) >= abs(dv) else "ranks"
 
 
 @dataclass
@@ -39,6 +62,9 @@ class Found:
     rotation_deg: float  # top face vs the mat lines, in (-45, 45]
     top_size_mm: tuple[float, float]  # top face sides, as a sanity check on the detection
     top_px: tuple[float, float]
+    shape: str = "cube"  # cube | brick | cylinder, from the top face's size and the height
+    along: str = "files"  # bricks: which mat axis the long side is closer to
+    height_mm: float = 30.0
 
     def usable(self, ws: workspace.Workspace) -> str | None:
         """None if the arm can pick this cube up, otherwise why not."""
@@ -100,15 +126,19 @@ def locate(frame: Frame, ws: workspace.Workspace) -> list[Found]:
     gray = cv2.cvtColor(frame.bgr, cv2.COLOR_BGR2GRAY)
     out = []
     for b in frame.blocks:
-        if not b.cube_height:
-            continue  # a mat square under warm light, a hand, ...: not a cube
+        if not FIND_HEIGHT_RANGE_MM[0] <= b.height_mm <= FIND_HEIGHT_RANGE_MM[1]:
+            continue  # a mat square under warm light, a hand, ...: not a block
         f, r = to_mat @ (b.world[:2] - a1_view)
         contours, _ = cv2.findContours(b.top_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         outline = max(contours, key=cv2.contourArea).reshape(-1, 1, 2).astype(np.float32)
         on_mat = cv2.perspectiveTransform(outline, H).reshape(-1, 2) * sq
-        _, size = square_rotation(on_mat)  # outline: only for the size sanity check
-        rot = edge_rotation(gray, b.top_mask, local_jacobian(H, b.top_px))
-        out.append(Found(b.color, float(f), float(r), rot, size, b.top_px))
+        _, size = square_rotation(on_mat)  # outline: for the size and shape
+        shape = classify(size, b.height_mm)
+        if shape is None:
+            continue
+        rot = 0.0 if shape == "cylinder" else edge_rotation(gray, b.top_mask, local_jacobian(H, b.top_px))
+        along = long_axis(on_mat) if shape == "brick" else "files"
+        out.append(Found(b.color, float(f), float(r), rot, size, b.top_px, shape, along, b.height_mm))
     return sorted(merge_fragments(out, ws), key=lambda c: (round(c.r), round(c.f)))
 
 
@@ -122,14 +152,14 @@ def local_jacobian(H: np.ndarray, px: tuple[float, float]) -> np.ndarray:
 
 
 def merge_fragments(found: list[Found], ws: workspace.Workspace) -> list[Found]:
-    """Drop detections that are not whole cubes: a top face much smaller or larger than a cube
-    (e.g. a shaded side face picked up in another color), or one sitting on a bigger detection."""
-    min_side, max_side = MIN_TOP_FRACTION * ws.block_size_mm, MAX_TOP_FRACTION * ws.block_size_mm
-    whole = sorted((c for c in found if min(c.top_size_mm) >= min_side and max(c.top_size_mm) <= max_side),
+    """Drop detections that are not whole blocks (wrong size), and ones sitting on a bigger
+    detection (e.g. a shaded side face picked up in another color)."""
+    whole = sorted((c for c in found if classify(c.top_size_mm, c.height_mm) is not None),
                    key=lambda c: -c.top_size_mm[0] * c.top_size_mm[1])
     kept: list[Found] = []
     for c in whole:
-        if all(math.dist((c.f, c.r), (k.f, k.r)) * ws.square_size_mm >= ws.block_size_mm for k in kept):
+        if all(math.dist((c.f, c.r), (k.f, k.r)) * ws.square_size_mm >= min(max(k.top_size_mm), ws.block_size_mm)
+               for k in kept):
             kept.append(c)
     return kept
 
@@ -173,13 +203,15 @@ def save_photo(photo: np.ndarray, n: int) -> Path:
 
 
 def table(found: list[Found], ws: workspace.Workspace) -> str:
-    lines = [f"  {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  {'top face':>9s}  pickable?"]
+    lines = [f"  {'shape':14s} {'color':7s} {'square':6s} {'files mm':>8s} {'ranks mm':>8s} {'rotation':>8s}  "
+             f"{'top face':>9s} {'high':>4s}  pickable?"]
     for c in found:
         df, dr = c.offset_mm(ws.square_size_mm)
         w, h = c.top_size_mm
         why = c.usable(ws)
-        lines.append(f"  {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  "
-                     f"{w:3.0f} x {h:3.0f}  {'yes' if why is None else 'no: ' + why}")
+        shape = f"{c.shape} ({c.along})" if c.shape == "brick" else c.shape
+        lines.append(f"  {shape:14s} {c.color:7s} {c.square or 'off mat':6s} {df:+8.1f} {dr:+8.1f} {c.rotation_deg:+7.1f}°  "
+                     f"{w:3.0f} x {h:3.0f} {c.height_mm:4.0f}  {'yes' if why is None else 'no: ' + why}")
     return "\n".join(lines)
 
 

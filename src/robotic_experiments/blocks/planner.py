@@ -185,7 +185,8 @@ TRAVEL_CLEARANCE_MM = 20.0  # a carried block's bottom stays this far above ever
 
 
 def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[float, float]]],
-                   existing: list | None = None, start: int = 0, check_scene: bool = False) -> Plan:
+                   existing: list | None = None, start: int = 0, check_scene: bool = False,
+                   others: list | None = None, turns: list[float] | None = None) -> Plan:
     """Build a solved structure (structure.solve) block by block, block i coming from pickups[i]
     (label, mat coordinates). Blocks before `start` are already built; `existing` (scene blocks,
     including those) are obstacles too. Placed blocks and blocks still waiting are obstacles for
@@ -195,6 +196,8 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
     from robotic_experiments.blocks.structure import Rect, held_mm  # pure; avoids an import cycle
 
     existing = list(existing or [])
+    others = list(others or [])  # (label, footprint Rect, height): objects on the supply area not used
+    turns = list(turns or [0.0] * len(placed))  # wrist turn to grab each block face-on
     problems = ws.mat_problems()
     if len(pickups) != len(placed):
         problems.append(f"{len(placed)} blocks but {len(pickups)} pickups")
@@ -230,7 +233,7 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
         lift = ws.grip_lift_mm(p.shape.height)
         built = ([(b.at or "a placed block", b.footprint(sq), b.top_mm) for b in built_before]
                  + [(q.at, q.footprint(sq), q.top_mm) for q in placed[start:i]])
-        waiting = [(lab, footprint_at(q, f, r), q.shape.height) for (lab, (f, r)), q in zip(pickups[i + 1:], placed[i + 1:])]
+        waiting = [(lab, footprint_at(q, f, r), q.shape.height) for (lab, (f, r)), q in zip(pickups[i + 1:], placed[i + 1:])] + others
 
         def clashes(f, r, gap, fingertip_mm, what, at_label):
             for name, fp, top in built + waiting:
@@ -250,7 +253,7 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
         assignments.append(Assignment(
             i, i, label, ws.xy_at(pf, pr), None, p.at, ws.xy_at(p.f, p.r),
             place_base_mm=p.base_mm, grip_lift_mm=lift, release_position=ws.release_position(held),
-            travel_z=travel, shape=p.shape.name, record=scene.from_placed(p),
+            travel_z=travel, shape=p.shape.name, record=scene.from_placed(p), pickup_turn_deg=turns[i],
         ))
     if problems:
         raise PlanError("; ".join(problems))

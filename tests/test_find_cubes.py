@@ -85,3 +85,15 @@ def test_only_cube_height_counts_as_a_block():
     assert mk(30.0).cube_height
     assert not mk(1.0).cube_height  # a light mat square under warm light
     assert not mk(150.0).cube_height  # a hand reaching in
+
+
+def test_classify_shapes_by_top_and_height():
+    from robotic_experiments.blocks.find_cubes import classify, long_axis
+
+    assert classify((29, 27), 25) == "cube"
+    assert classify((57, 27), 24) == "brick"
+    assert classify((25, 24), 54) == "cylinder"
+    assert classify((11, 32), 25) is None  # a sliver of side face
+    assert classify((54, 122), 30) is None  # a hand
+    pts = np.array([[x, y] for x in range(-30, 31, 5) for y in (-15, 15)], float)
+    assert long_axis(pts) == "files" and long_axis(pts[:, ::-1]) == "ranks"

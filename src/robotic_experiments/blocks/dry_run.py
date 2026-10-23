@@ -51,7 +51,7 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
             pickup_squares=tuple(args.pickups) if args.pickups else ws.pickup_squares,
         )
     if args.build:
-        return plan_build(args.build, ws)
+        return plan_build(args.build, ws, args.find)
     if args.transfer:
         if len(args.transfer) % 2:
             raise ValueError("--transfer takes FROM TO pairs")
@@ -71,25 +71,71 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
     return plan(design, ws, find_loose(ws))
 
 
-def plan_build(path: str, ws: workspace.Workspace) -> Plan:
-    """Plan a build file; each block says where it is picked up with `from = "f1"`."""
-    from robotic_experiments.blocks import structure
-
-    placed, raw = structure.load(path, ws.square_size_mm)
-    missing = [str(i) for i, b in enumerate(raw) if "from" not in b]
-    if missing:
-        raise ValueError(f"blocks {', '.join(missing)} have no `from`: say which square each block is picked up from")
-    pickups = [(b["from"], structure.parse_at(b["from"])) for b in raw]
-    from robotic_experiments.blocks import scene
+def plan_build(path: str, ws: workspace.Workspace, find: bool = False) -> Plan:
+    """Plan a build file. Each block is picked up from its `from` square or, with `find`, from a
+    block of the same shape the camera finds in the supply area (bricks lying the same way)."""
+    from robotic_experiments.blocks import scene, structure
     from robotic_experiments.blocks.planner import already_built
 
+    placed, raw = structure.load(path, ws.square_size_mm)
     existing = scene.load()
     start = already_built(placed, existing)
     if start:
         print(f"Resuming: the first {start} block(s) of {path} are already in the scene record.")
     if existing and len(existing) > start:
         print(f"{len(existing) - start} other block(s) in the scene record are obstacles.")
-    return plan_structure(ws, placed, pickups, existing, start, check_scene=True)
+    if not find:
+        missing = [str(i) for i, b in enumerate(raw) if "from" not in b]
+        if missing:
+            raise ValueError(f"blocks {', '.join(missing)} have no `from`: say which square each block is "
+                             "picked up from, or use --find")
+        pickups = [(b["from"], structure.parse_at(b["from"])) for b in raw]
+        return plan_structure(ws, placed, pickups, existing, start, check_scene=True)
+
+    found = [c for c in find_objects(ws)]
+    free = [c for c in found if c.usable(ws) is None]
+    pickups, turns, used = [], [], set()
+    for i, p in enumerate(placed):
+        if i < start:
+            pickups.append(("built", (p.f, p.r)))
+            turns.append(0.0)
+            continue
+        match = next((k for k, c in enumerate(free) if k not in used and c.shape == p.shape.name
+                      and (c.shape != "brick" or c.along == p.along)), None)
+        if match is None:
+            how = f" lying along the {p.along}" if p.shape.name == "brick" else ""
+            raise ValueError(f"block {i} needs a {p.shape.name}{how} in reach in the supply area; none left")
+        used.add(match)
+        c = free[match]
+        pickups.append((f"{c.color} {c.shape} {c.square}", (c.f, c.r)))
+        turns.append(c.rotation_deg)
+    others = [_obstacle(c, ws) for k, c in enumerate(free) if k not in used] + \
+             [_obstacle(c, ws) for c in found if c.usable(ws) is not None]
+    return plan_structure(ws, placed, pickups, existing, start, check_scene=True, others=others, turns=turns)
+
+
+def _obstacle(c, ws: workspace.Workspace):
+    """A found object that stays where it is, as (label, footprint, height) for the planner."""
+    from robotic_experiments.blocks.structure import SHAPES, Rect
+
+    s = SHAPES[c.shape]
+    lu, lv = (s.length, s.width) if c.along == "files" else (s.width, s.length)
+    u, v = ws.uv_at(c.f, c.r)
+    return (f"{c.color} {c.shape} {c.square}", Rect(u - lu / 2, v - lv / 2, u + lu / 2, v + lv / 2), s.height)
+
+
+def find_objects(ws: workspace.Workspace):
+    """Find blocks with the camera (read-only), print what was found, return find_cubes.Found items."""
+    from robotic_experiments.blocks import find_cubes
+
+    try:
+        found, photo = asyncio.run(find_cubes.find(ws, require_find_pose=True))
+    except find_cubes.LocateError as e:
+        raise ValueError(f"camera: {e}") from e
+    print(f"Camera found {len(found)} block(s):")
+    print(find_cubes.table(found, ws))
+    print(f"Photo: {find_cubes.save_photo(photo, len(found))}\n")
+    return found
 
 
 def find_loose(ws: workspace.Workspace) -> list[Loose]:

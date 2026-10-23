@@ -54,8 +54,11 @@ BLOCK_COLORS = {
     "orange": WARM,
     # Yellow: top H 28 S 131-207. Mat/border H 0-13 or ~96, tape and table H 97-99.
     "yellow": [((20, 80, 110), (38, 255, 255))],
-    # Green: H 84-86 S 222-255 V 93-141. The blue tape is H 98-99, so stay below ~92.
-    "green": [((70, 120, 60), (92, 255, 255))],
+    # Green: cubes H 77-86, cylinders H 65-79 (shaded sides darker). The blue tape is H 98-99.
+    "green": [((62, 120, 50), (92, 255, 255))],
+    # Blue bricks: H 98-101 S 220-255. The tape has the same hue but S 142-194 and lies flat on
+    # the mat, so the saturation floor and the height check both keep it out.
+    "blue": [((92, 205, 60), (110, 255, 255))],
 }
 
 
