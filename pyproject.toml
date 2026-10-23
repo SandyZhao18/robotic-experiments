@@ -7,6 +7,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "numpy>=2.5.4",
+    "opencv-python-headless>=5.0.0.93",
     "python-dotenv>=1.2.4",
     "viam-sdk>=0.85.0",
 ]
@@ -16,6 +18,7 @@ inspect-machine = "robotic_experiments.inspect_machine:main"
 blocks-dry-run = "robotic_experiments.blocks.dry_run:main"
 blocks-run = "robotic_experiments.blocks.executor:main"
 record-pose = "robotic_experiments.blocks.record_pose:main"
+locate-mat = "robotic_experiments.blocks.locate_mat:main"
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]
