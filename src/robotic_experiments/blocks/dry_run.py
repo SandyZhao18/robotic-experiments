@@ -29,16 +29,20 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--goto", nargs=3, type=float, metavar=("X", "Y", "Z"), help="move the gripper to a point, e.g. to aim the camera")
     parser.add_argument("--grid-top-left", metavar="SQUARE", help="override the build grid's top-left square")
     parser.add_argument("--grid-stride", type=int, help="override squares between design cells (1 = adjacent)")
+    parser.add_argument("--pickups", nargs="+", metavar="SQUARE", help="override the pickup squares, in order")
     parser.add_argument("--hover-z", type=float, default=DEFAULT_HOVER_Z, help="gripper z for --hover (default: %(default)s)")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
 
 
 def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
-    if args.grid_top_left or args.grid_stride:
+    if args.grid_top_left or args.grid_stride or args.pickups:
+        for sq in args.pickups or []:
+            workspace.parse_square(sq)
         ws = dataclasses.replace(
             ws,
             grid_top_left=args.grid_top_left or ws.grid_top_left,
             grid_stride=args.grid_stride or ws.grid_stride,
+            pickup_squares=tuple(args.pickups) if args.pickups else ws.pickup_squares,
         )
     if args.transfer:
         if len(args.transfer) % 2:

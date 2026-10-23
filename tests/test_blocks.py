@@ -107,10 +107,21 @@ def test_rejects_pickup_inside_grid():
         plan(Design.preset("one"), ws)
 
 
-def test_rejects_pickups_too_close():
-    ws = dataclasses.replace(WS, pickup_squares=("a1", "b1"))
-    with pytest.raises(PlanError, match=r"pickup 1 \(b1\) is"):
-        plan(Design.preset("one"), ws)
+def test_pickups_side_by_side_across_the_finger_opening_are_allowed():
+    ws = dataclasses.replace(WS, theta_deg=-91.0)  # fingers open along ranks
+    assert ws.fingers_open_along_ranks
+    ok = dataclasses.replace(ws, pickup_squares=("a1", "b1", "c1", "d1", "e1"))
+    assert not [p for p in ok.layout_problems() if "pickup" in p]
+    bad = dataclasses.replace(ws, pickup_squares=("a1", "a2"))
+    with pytest.raises(PlanError, match=r"pickup 1 \(a2\)"):
+        plan(Design.preset("one"), bad)
+
+
+def test_finger_direction_follows_theta():
+    along_ranks = dataclasses.replace(WS, theta_deg=-91.0)
+    along_files = dataclasses.replace(WS, theta_deg=-1.0)
+    assert along_ranks.finger_conflict("a3", "a4", 100.0) and not along_ranks.finger_conflict("a3", "b3", 100.0)
+    assert along_files.finger_conflict("a3", "b3", 100.0) and not along_files.finger_conflict("a3", "a4", 100.0)
 
 
 def test_placement_offset_shifts_targets_not_measurements():
@@ -122,13 +133,14 @@ def test_placement_offset_shifts_targets_not_measurements():
 
 
 def test_transfer_refuses_adjacent_squares_with_fully_open_fingers():
-    # fixture: open span 100 mm -> neighbours need 75 mm; adjacent squares are 57 mm apart
-    with pytest.raises(PlanError, match="open fingers need"):
-        plan_transfer(WS, [("a1", "a3"), ("c1", "a4")])
+    # span 100 mm -> a neighbour along the opening needs 75 mm; adjacent squares are 57 mm apart
+    ws = dataclasses.replace(WS, theta_deg=-91.0)
+    with pytest.raises(PlanError, match="along the finger opening"):
+        plan_transfer(ws, [("a1", "a3"), ("c1", "a4")])
 
 
 def test_transfer_allows_adjacent_squares_with_partly_open_fingers():
-    ws = dataclasses.replace(WS, open_position=400.0, open_finger_span_mm=65.0, finger_clearance_mm=8.0)
+    ws = dataclasses.replace(WS, theta_deg=-91.0, open_position=400.0, open_finger_span_mm=65.0, finger_clearance_mm=8.0)
     p = plan_transfer(ws, [("a1", "a3"), ("c1", "a4")])
     assert [a.cell_square for a in p.assignments] == ["a3", "a4"]
 

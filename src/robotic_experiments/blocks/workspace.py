@@ -63,6 +63,7 @@ class Workspace:
     # Picking up always opens fully, so a block that is a few mm off its pickup square still fits.
     open_position: float | None
     full_open_span_mm: float  # outer width of the fully open fingers (used around pickups)
+    finger_width_mm: float  # width of the finger assembly across the opening direction
 
     grip_z: float  # gripper-frame z when the fingers are around a block on the mat
     approach_height_mm: float  # above grip_z, for approach and retreat
@@ -78,14 +79,24 @@ class Workspace:
     arrival_tolerance_mm: float
 
     @property
-    def min_neighbour_spacing_mm(self) -> float:
-        """Closest a neighbouring block may be to where a block is released."""
-        return (self.block_size_mm + self.open_finger_span_mm) / 2 + self.finger_clearance_mm
+    def fingers_open_along_ranks(self) -> bool:
+        """At theta = -91 (or 89) the fingers open along the ranks; 90 degrees off, along the files."""
+        return abs((self.theta_deg + 91) % 180) < 45 or abs((self.theta_deg + 91) % 180) > 135
 
-    @property
-    def min_pickup_spacing_mm(self) -> float:
-        """Closest a neighbouring block may be to where a block is picked up (fingers fully open)."""
-        return (self.block_size_mm + self.full_open_span_mm) / 2 + self.finger_clearance_mm
+    def finger_conflict(self, square: str, neighbour: str, span_mm: float) -> str | None:
+        """Why open fingers (outer span `span_mm`) at `square` would touch a block on `neighbour`, or None.
+
+        The fingers reach span/2 along their opening direction but only finger_width/2 across it,
+        so blocks beside the fingers can be much closer than blocks in front of them.
+        """
+        (u1, v1), (u2, v2) = self.square_uv(square), self.square_uv(neighbour)
+        d_open, d_across = (abs(v2 - v1), abs(u2 - u1)) if self.fingers_open_along_ranks else (abs(u2 - u1), abs(v2 - v1))
+        half, margin = self.block_size_mm / 2, self.finger_clearance_mm
+        need_open, need_across = span_mm / 2 + half + margin, self.finger_width_mm / 2 + half + margin
+        if d_open < need_open and d_across < need_across:
+            return (f"{neighbour} is {d_open:.0f} mm away along the finger opening (need {need_open:.0f}) "
+                    f"and {d_across:.0f} mm across it (need {need_across:.0f})")
+        return None
 
     @property
     def mat_top_z(self) -> float:
@@ -182,22 +193,19 @@ class Workspace:
         except ValueError as e:
             return out + [f"build grid from {self.grid_top_left} with stride {self.grid_stride}: {e}"]
 
-        needed = self.min_neighbour_spacing_mm
-        pitch = min(fp, rp) * self.grid_stride
-        if pitch < needed:
-            out.append(f"build grid pitch {pitch:.1f} mm is too tight: open fingers beside a placed block need {needed:.1f} mm")
-
-        named = [(f"build square {s}", self.square_xy(s)) for s in sorted(cells)]
-        pickup_needed = self.min_pickup_spacing_mm
+        # Releasing on a cell (partly open) next to another cell; picking up (fully open) next to
+        # any cell or other pickup.
+        for a in sorted(cells):
+            for b in sorted(cells):
+                if a < b and (why := self.finger_conflict(a, b, self.open_finger_span_mm)):
+                    out.append(f"build grid too tight for the open fingers: dropping on {a}, {why}")
         for i, s in enumerate(self.pickup_squares):
             if s in cells:
                 out.append(f"pickup {i} ({s}) is inside the build grid")
                 continue
-            p = self.square_xy(s)
-            for label, q in named:
-                if math.dist(p, q) < pickup_needed:
-                    out.append(f"pickup {i} ({s}) is {math.dist(p, q):.1f} mm from {label}, need {pickup_needed:.1f} mm")
-            named.append((f"pickup {i} ({s})", p))
+            for other in sorted(cells) + list(self.pickup_squares[:i]):
+                if why := self.finger_conflict(s, other, self.full_open_span_mm):
+                    out.append(f"pickup {i} ({s}): {why}")
         return out
 
 
@@ -227,6 +235,7 @@ def load(path: str | Path) -> Workspace:
         finger_clearance_mm=float(grip["finger_clearance_mm"]),
         open_position=float(grip["open_position"]) if "open_position" in grip else None,
         full_open_span_mm=float(grip.get("full_open_span_mm", grip["open_finger_span_mm"])),
+        finger_width_mm=float(grip.get("finger_width_mm", 45.0)),
         grip_z=float(grip["grip_z"]),
         approach_height_mm=float(grip["approach_height_mm"]),
         place_release_offset_mm=float(grip["place_release_offset_mm"]),

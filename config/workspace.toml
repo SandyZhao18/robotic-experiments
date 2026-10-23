@@ -55,6 +55,7 @@ size_mm = 30.0                   # red cube, 30 x 30 x 30
 open_position = 360.0            # used to RELEASE (~44 mm gap)
 open_finger_span_mm = 66.0       # outer width across the fingers at open_position
 full_open_span_mm = 113.0        # pickups open fully: tolerates ~30 mm of block offset
+finger_width_mm = 45.0           # across the opening direction; from the gripper's claw geometry (measure)
 finger_clearance_mm = 8.0        # extra margin beside neighbouring blocks -> 56 mm minimum spacing
 grip_z = 73.3                    # hover test: gripper z 150.3 with fingertips 82 mm above the mat
                                  # -> fingertips 5 mm above the mat = 150.3 - 82 + 5

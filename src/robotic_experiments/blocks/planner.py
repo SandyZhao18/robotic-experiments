@@ -84,14 +84,10 @@ def plan_transfer(ws: Workspace, moves: list[tuple[str, str]]) -> Plan:
     # at each pickup, partly open (open_position) at each drop.
     for i, (src, dst) in enumerate(moves):
         neighbours = [d for _, d in moves[:i]] + [s for s, _ in moves[i + 1:]]
-        for square, needed, what in ((src, ws.min_pickup_spacing_mm, "pickup"), (dst, ws.min_neighbour_spacing_mm, "drop")):
+        for square, span, what in ((src, ws.full_open_span_mm, "pickup"), (dst, ws.open_finger_span_mm, "drop")):
             for n in neighbours:
-                gap = math.dist(ws.measured_square_xy(square), ws.measured_square_xy(n))
-                if gap < needed:
-                    problems.append(
-                        f"move {i}: {what} {square} is {gap:.0f} mm from the block on {n}; "
-                        f"open fingers need {needed:.0f} mm"
-                    )
+                if why := ws.finger_conflict(square, n, span):
+                    problems.append(f"move {i}: {what} {square}: block on {why}")
     if problems:
         raise PlanError("; ".join(problems))
     assignments = tuple(
