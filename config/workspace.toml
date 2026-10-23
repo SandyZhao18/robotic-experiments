@@ -1,10 +1,10 @@
 # Sketch-to-Structure workspace. All positions are in the `world` frame, in mm.
 # z values are for the GRIPPER FRAME (what `uv run record-pose` prints), not the block.
 #
-# Status: mat located by camera (locate-mat, 2026-10-23); table and mat thickness measured.
-# NOT YET MEASURED: grip_z (needs the hover test). The executor refuses to move while
-# `calibrated = false`, except for a high --hover.
-calibrated = false
+# Status (2026-10-23): mat located by camera (locate-mat); square size and mat thickness
+# measured with a ruler; grip_z from the hover test. Open question: the table z below
+# disagrees with the camera by ~33 mm (see README) — grip_z does not depend on it.
+calibrated = true
 frame = "world"
 
 [table]
@@ -34,7 +34,8 @@ size_mm = 30.0                   # red cube, 30 x 30 x 30
 [gripper]
 open_finger_span_mm = 100.0      # outer width across the open fingers
 finger_clearance_mm = 10.0       # extra margin beside neighbouring blocks
-grip_z = -5.0                    # PLACEHOLDER until the hover test. Block center is at mat + 15 = -20
+grip_z = 73.3                    # hover test: gripper z 150.3 with fingertips 82 mm above the mat
+                                 # -> fingertips 5 mm above the mat = 150.3 - 82 + 5
 approach_height_mm = 60.0        # above grip_z
 place_release_offset_mm = 2.0    # above grip_z when letting go on the mat
 travel_z = 200.0
