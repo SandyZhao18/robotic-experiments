@@ -1,0 +1,5 @@
+# A green cylinder standing on the mat on the seam between c3 and c4.
+[[block]]
+shape = "cylinder"
+at = "c3|c4"
+from = "g1"

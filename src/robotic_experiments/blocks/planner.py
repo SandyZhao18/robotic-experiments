@@ -26,6 +26,7 @@ class Step:
     label: str
     block: int | None = None  # index of the block this step belongs to
     target: Target | None = None
+    position: float | None = None  # gripper position for "release" (None: the workspace default)
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,11 @@ class Assignment:
     cell_square: str
     cell_xy: tuple[float, float]
     pickup_turn_deg: float = 0.0  # wrist turn to grab a twisted block face-on (counterclockwise, degrees)
+    place_base_mm: float = 0.0  # what the block lands on, above the mat (0: the mat itself)
+    grip_lift_mm: float = 0.0  # grip this much higher than usual (tall blocks vs the palm)
+    release_position: float | None = None  # gripper position to let go (None: the workspace default)
+    travel_z: float | None = None  # travel height while carrying (None: the workspace default)
+    shape: str = "cube"
 
 
 @dataclass(frozen=True)
@@ -45,6 +51,7 @@ class Plan:
     design: Design | None
     assignments: tuple[Assignment, ...]
     steps: tuple[Step, ...]
+    structure: tuple | None = None  # placed blocks, for build files
 
 
 class PlanError(ValueError):
@@ -171,6 +178,65 @@ def _pickup_order(ws: Workspace, sources: list, loose: list[Loose], n: int, prob
     return order
 
 
+TRAVEL_CLEARANCE_MM = 20.0  # a carried block's bottom stays this far above everything on the mat
+
+
+def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[float, float]]]) -> Plan:
+    """Build a solved structure (structure.solve) block by block, block i coming from pickups[i]
+    (label, mat coordinates). Placed blocks and blocks still waiting are obstacles for the fingers
+    at every pickup and drop; travel height rises to clear the tallest of them."""
+    from robotic_experiments.blocks.structure import Rect, held_mm  # pure; avoids an import cycle
+
+    problems = ws.mat_problems()
+    if len(pickups) != len(placed):
+        problems.append(f"{len(placed)} blocks but {len(pickups)} pickups")
+    if problems:
+        raise PlanError("; ".join(problems))
+    sq = ws.square_size_mm
+
+    def footprint_at(p, f, r):
+        lu, lv = (p.shape.length, p.shape.width) if p.along == "files" else (p.shape.width, p.shape.length)
+        u, v = ws.uv_at(f, r)
+        return Rect(u - lu / 2, v - lv / 2, u + lu / 2, v + lv / 2)
+
+    for i, ((label, (f, r)), p) in enumerate(zip(pickups, placed)):
+        here = footprint_at(p, f, r)
+        if any(here.overlap(q.footprint(sq)) for q in placed):
+            problems.append(f"pickup {label} for block {i} lies inside the structure")
+
+    assignments = []
+    for i, ((label, (pf, pr)), p) in enumerate(zip(pickups, placed)):
+        held = held_mm(p, ws.fingers_open_along_ranks)
+        lift = ws.grip_lift_mm(p.shape.height)
+        built = [(q.at, q.footprint(sq), q.top_mm) for q in placed[:i]]
+        waiting = [(lab, footprint_at(q, f, r), q.shape.height) for (lab, (f, r)), q in zip(pickups[i + 1:], placed[i + 1:])]
+
+        def clashes(f, r, gap, fingertip_mm, what, at_label):
+            for name, fp, top in built + waiting:
+                if top <= fingertip_mm:
+                    continue  # entirely below the fingers
+                if any(fp.overlap(fr) for fr in ws.finger_rects(f, r, gap, ws.finger_clearance_mm)):
+                    problems.append(f"block {i} ({p.shape.name}): fingers at the {what} {at_label} would touch the block on {name}")
+
+        full_gap = ws.full_open_span_mm - 2 * ws.finger_thickness_mm
+        clashes(pf, pr, full_gap, 5.0 + lift, "pickup", label)
+        clashes(p.f, p.r, ws.release_gap_mm(held), p.base_mm + 5.0 + lift + ws.place_release_offset_mm, "drop on", p.at)
+
+        tallest = max([t for _, _, t in built + waiting], default=0.0)
+        place_above = ws.grip_z + p.base_mm + lift + ws.approach_height_mm
+        travel = max(ws.travel_z, place_above,
+                     ws.mat_top_z + tallest + TRAVEL_CLEARANCE_MM + 5.0 + lift + ws.tcp_above_fingertips_mm)
+        assignments.append(Assignment(
+            i, i, label, ws.xy_at(pf, pr), None, p.at, ws.xy_at(p.f, p.r),
+            place_base_mm=p.base_mm, grip_lift_mm=lift, release_position=ws.release_position(held),
+            travel_z=travel, shape=p.shape.name,
+        ))
+    if problems:
+        raise PlanError("; ".join(problems))
+    assignments = tuple(assignments)
+    return Plan(None, assignments, _pick_and_place_steps(ws, assignments), tuple(placed))
+
+
 MIN_TURN_DEG = 2.0  # smaller twists are grabbed at the usual wrist angle
 
 
@@ -185,36 +251,38 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
     def at(xy, z, theta=None):
         return Target(xy[0], xy[1], z, ws.theta_deg if theta is None else theta)
 
-    grip_z = ws.grip_z
-    above = grip_z + ws.approach_height_mm
-    release_z = grip_z + ws.place_release_offset_mm
-
     steps = [Step("move", "move to safe start", target=Target(*ws.safe_start, ws.theta_deg))]
     for a in assignments:
+        grip_z = ws.grip_z + a.grip_lift_mm  # pickups are on the mat
+        above = grip_z + ws.approach_height_mm
+        place_z = ws.grip_z + a.place_base_mm + a.grip_lift_mm
+        place_above = place_z + ws.approach_height_mm
+        release_z = place_z + ws.place_release_offset_mm
+        travel = a.travel_z if a.travel_z is not None else ws.travel_z
         b = a.block
         src = f"pickup {a.pickup_square}"
         dst = a.cell_square if a.cell is None else f"{a.cell_square} (cell {a.cell[0]},{a.cell[1]})"
         turned = abs(a.pickup_turn_deg) >= MIN_TURN_DEG
         tp = wrist_theta(ws.theta_deg, a.pickup_turn_deg) if turned else ws.theta_deg
         steps += [
-            Step("move", f"travel above {src}", b, at(a.pickup_xy, ws.travel_z)),
+            Step("move", f"travel above {src}", b, at(a.pickup_xy, travel)),
             *([Step("move", f"turn wrist {a.pickup_turn_deg:+.0f} deg to match the block", b,
-                    at(a.pickup_xy, ws.travel_z, tp))] if turned else []),
+                    at(a.pickup_xy, travel, tp))] if turned else []),
             Step("move", f"approach {src}", b, at(a.pickup_xy, above, tp)),
             Step("open", "open fingers", b),
             Step("move", f"descend to grip at {src}", b, at(a.pickup_xy, grip_z, tp)),
             Step("grab", "close fingers and verify grasp", b),
             Step("move", "lift to approach height", b, at(a.pickup_xy, above, tp)),
-            Step("move", "lift to travel height", b, at(a.pickup_xy, ws.travel_z, tp)),
+            Step("move", "lift to travel height", b, at(a.pickup_xy, travel, tp)),
             *([Step("move", "turn wrist back (block is now square to the mat)", b,
-                    at(a.pickup_xy, ws.travel_z))] if turned else []),
-            Step("move", f"travel above {dst}", b, at(a.cell_xy, ws.travel_z)),
-            Step("move", f"approach {dst}", b, at(a.cell_xy, above)),
+                    at(a.pickup_xy, travel))] if turned else []),
+            Step("move", f"travel above {dst}", b, at(a.cell_xy, travel)),
+            Step("move", f"approach {dst}", b, at(a.cell_xy, place_above)),
             Step("move", f"lower block onto {dst}", b, at(a.cell_xy, release_z)),
-            Step("release", "open fingers to release", b),
-            Step("move", "retreat upward", b, at(a.cell_xy, above)),
+            Step("release", "open fingers to release", b, position=a.release_position),
+            Step("move", "retreat upward", b, at(a.cell_xy, place_above)),
             Step("check_released", "close fingers to confirm the block was let go", b),
-            Step("move", "retreat to travel height", b, at(a.cell_xy, ws.travel_z)),
+            Step("move", "retreat to travel height", b, at(a.cell_xy, travel)),
         ]
     steps.append(Step("move", "return to safe start", target=Target(*ws.safe_start, ws.theta_deg)))
     _check_bounds(ws, steps)

@@ -1,0 +1,13 @@
+# Three cubes stacked on a3.
+[[block]]
+at = "a3"
+from = "f1"
+
+[[block]]
+at = "a3"
+from = "g1"
+
+[[block]]
+at = "a3"
+from = "h1"
+level = 3

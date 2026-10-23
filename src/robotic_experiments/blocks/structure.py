@@ -147,10 +147,34 @@ def solve(blocks: list[dict], square_mm: float) -> list[Placed]:
     return placed
 
 
-def load(path: str | Path, square_mm: float) -> list[Placed]:
+def load(path: str | Path, square_mm: float) -> tuple[list[Placed], list[dict]]:
+    """Solve a build file; returns the placed blocks and the raw entries (for `from` etc.)."""
     with open(path, "rb") as fh:
         d = tomllib.load(fh)
     blocks = d.get("block", [])
     if not blocks:
         raise StructureError(f"{path}: no [[block]] entries")
-    return solve(blocks, square_mm)
+    return solve(blocks, square_mm), blocks
+
+
+def held_mm(p: Placed, fingers_open_along_ranks: bool = True) -> float:
+    """How wide the block is between the fingers (they close along the ranks at the usual angle)."""
+    if p.shape.round:
+        return p.shape.width
+    along_closing = "ranks" if fingers_open_along_ranks else "files"
+    return p.shape.length if p.along == along_closing else p.shape.width
+
+
+def top_view(placed: list[Placed], files: str = "abcde", ranks=range(1, 9)) -> str:
+    """Tallest level on each square (seam blocks count on both squares), rank 8 at the top."""
+    tallest: dict[str, int] = {}
+    for p in placed:
+        squares = [s.strip() for s in p.at.split("|")]
+        for s in squares:
+            tallest[s] = max(tallest.get(s, 0), p.level)
+    lines = []
+    for r in reversed(list(ranks)):
+        row = " ".join(str(tallest.get(f"{f}{r}", ".")) for f in files)
+        lines.append(f"  {r}  {row}")
+    lines.append("     " + " ".join(files))
+    return "\n".join(lines)

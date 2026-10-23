@@ -62,6 +62,11 @@ open_position = 360.0            # used to RELEASE (~44 mm gap)
 open_finger_span_mm = 66.0       # outer width across the fingers at open_position
 full_open_span_mm = 113.0        # pickups open fully: tolerates ~30 mm of block offset
 finger_width_mm = 45.0           # across the opening direction; from the gripper's claw geometry (measure)
+finger_thickness_mm = 11.0       # each finger along the opening: (113 - 92) / 2 and (70 - 48) / 2
+finger_depth_mm = 45.0           # fingertip to palm between the fingers: PLACEHOLDER, measure (cylinders are 60 tall)
+gap_mm_per_unit = 0.1            # inner gap ~= 0.1 * position + 8 (measured at 399 and 840)
+gap_mm_at_zero = 8.0
+release_side_clearance_mm = 7.0  # release opening = held size + 2 x this (30 mm cube -> 44 mm, position 360)
 finger_clearance_mm = 8.0        # extra margin beside neighbouring blocks -> 56 mm minimum spacing
 grip_z = 73.3                    # hover test: gripper z 150.3 with fingertips 82 mm above the mat
                                  # -> fingertips 5 mm above the mat = 150.3 - 82 + 5

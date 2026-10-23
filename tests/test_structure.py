@@ -68,3 +68,64 @@ def test_brick_along_ranks_footprint():
 def test_unknown_shape():
     with pytest.raises(StructureError, match="unknown shape"):
         solve([{"shape": "pyramid", "at": "a3"}], SQ)
+
+
+def _ws():
+    import dataclasses
+
+    from robotic_experiments.blocks import workspace
+
+    return dataclasses.replace(workspace.load("tests/workspace_fixture.toml"), theta_deg=-91.0,
+                               bounds_min=(-1e4, -1e4, -1e4), bounds_max=(1e4, 1e4, 1e4))
+
+
+def test_tower_releases_one_cube_higher_each_level():
+    from robotic_experiments.blocks.planner import plan_structure
+
+    ws = _ws()
+    placed = solve([{"at": "a3"}, {"at": "a3"}, {"at": "a3"}], ws.square_size_mm)
+    p = plan_structure(ws, placed, [("f1", (5.0, 0.0)), ("g1", (6.0, 0.0)), ("h1", (7.0, 0.0))])
+    lows = [s.target.z for s in p.steps if s.label.startswith("lower block")]
+    assert [round(z - lows[0], 6) for z in lows] == [0.0, 30.0, 60.0]
+    assert all(s.position == ws.release_position(30.0) for s in p.steps if s.kind == "release")
+
+
+def test_brick_along_ranks_is_released_wider():
+    from robotic_experiments.blocks.planner import plan_structure
+
+    ws = _ws()
+    placed = solve([{"shape": "brick", "at": "a3|a4", "along": "ranks"}], ws.square_size_mm)
+    p = plan_structure(ws, placed, [("f1|f2", (5.0, 0.5))])
+    (rel,) = [s for s in p.steps if s.kind == "release"]
+    assert rel.position == ws.release_position(60.0)
+
+
+def test_tall_cylinder_is_gripped_higher():
+    from robotic_experiments.blocks.planner import plan_structure
+
+    ws = _ws()
+    placed = solve([{"shape": "cylinder", "at": "c3"}], ws.square_size_mm)
+    p = plan_structure(ws, placed, [("f1", (5.0, 0.0))])
+    grip = next(s for s in p.steps if s.label.startswith("descend"))
+    assert grip.target.z == pytest.approx(ws.grip_z + 60.0 - ws.finger_depth_mm)
+
+
+def test_drop_next_to_a_taller_neighbour_along_the_finger_opening_is_refused():
+    from robotic_experiments.blocks.planner import PlanError, plan_structure
+
+    ws = _ws()
+    # a 2-cube stack on a4, then a cube on a3 right next to it along the ranks (the finger opening)
+    placed = solve([{"at": "a4"}, {"at": "a4"}, {"at": "a3"}], ws.square_size_mm)
+    with pytest.raises(PlanError, match="drop on a3 would touch the block on a4"):
+        plan_structure(ws, placed, [("f1", (5.0, 0.0)), ("g1", (6.0, 0.0)), ("h1", (7.0, 0.0))])
+
+
+def test_travel_rises_over_tall_stacks():
+    from robotic_experiments.blocks.planner import TRAVEL_CLEARANCE_MM, plan_structure
+
+    ws = _ws()
+    placed = solve([{"at": "a3"}, {"at": "a3"}, {"at": "a3"}, {"shape": "cylinder", "at": "a3"}], ws.square_size_mm)
+    p = plan_structure(ws, placed, [(s, (f, 0.0)) for s, f in (("e1", 4.0), ("f1", 5.0), ("g1", 6.0), ("h1", 7.0))])
+    last_travel = max(s.target.z for s in p.steps if s.block == 3 and s.label.startswith("travel above"))
+    lift = ws.grip_lift_mm(60.0)
+    assert last_travel >= ws.mat_top_z + 90 + TRAVEL_CLEARANCE_MM + 5 + lift + ws.tcp_above_fingertips_mm - 1e-6

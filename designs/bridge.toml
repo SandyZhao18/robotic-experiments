@@ -1,0 +1,20 @@
+# Two cubes with a blue brick bridging them, and a cube on top of the brick's middle.
+[[block]]
+at = "a3"
+from = "f1"
+
+[[block]]
+at = "b3"
+from = "g1"
+
+[[block]]
+shape = "brick"
+at = "a3|b3"          # the seam between a3 and b3
+along = "files"
+from = "f3|g3"        # the brick waits across the f3/g3 seam, along the files too
+level = 2
+
+[[block]]
+at = "a3|b3"
+from = "h1"
+level = 3

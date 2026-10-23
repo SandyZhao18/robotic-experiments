@@ -160,7 +160,10 @@ def test_preflight_treats_partial_opening_as_empty():
     assert parked_open(SimpleNamespace(meta={"position": 362.0}), ws)
     assert not parked_open(SimpleNamespace(meta={"position": 220.0}), ws)  # a cube in the fingers
     assert not parked_open(SimpleNamespace(meta={}), ws)
-    assert not parked_open(SimpleNamespace(meta={"position": 362.0}), dataclasses.replace(WS, open_position=None))
+    # release openings per block size are parking spots too (30 mm -> 360, 60 mm -> 660) ...
+    assert parked_open(SimpleNamespace(meta={"position": 662.0}), dataclasses.replace(WS, open_position=None))
+    # ... but fingers closed on a brick's 60 mm length (~520) are holding it
+    assert not parked_open(SimpleNamespace(meta={"position": 520.0}), dataclasses.replace(WS, open_position=None))
 
 
 def test_plan_from_loose_blocks_uses_pickable_ones_in_order():

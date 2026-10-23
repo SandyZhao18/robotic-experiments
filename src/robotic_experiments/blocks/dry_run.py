@@ -15,7 +15,7 @@ import sys
 from robotic_experiments.blocks import workspace
 from robotic_experiments.blocks.design import PRESETS, Design
 from robotic_experiments.blocks.planner import (
-    Loose, Plan, PlanError, plan, plan_goto, plan_hover, plan_open_gripper, plan_transfer,
+    Loose, Plan, PlanError, plan, plan_goto, plan_hover, plan_open_gripper, plan_structure, plan_transfer,
 )
 
 DEFAULT_WORKSPACE = "config/workspace.toml"
@@ -26,6 +26,7 @@ def add_design_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--preset", choices=sorted(PRESETS), help="built-in pattern")
     group.add_argument("--grid", help='pattern rows separated by "|", e.g. "#..|#..|###"')
+    group.add_argument("--build", metavar="FILE", help="a build file of blocks (shapes, stacking, seams)")
     group.add_argument("--transfer", nargs="+", metavar="SQUARE", help="FROM TO pairs, e.g. a1 a3 or a1 e3 c1 a7")
     group.add_argument("--hover", metavar="SQUARE", help="go above a square and stop, for measuring")
     group.add_argument("--open-gripper", action="store_true", help="only open the fingers to the configured position")
@@ -49,6 +50,8 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
             grid_stride=args.grid_stride or ws.grid_stride,
             pickup_squares=tuple(args.pickups) if args.pickups else ws.pickup_squares,
         )
+    if args.build:
+        return plan_build(args.build, ws)
     if args.transfer:
         if len(args.transfer) % 2:
             raise ValueError("--transfer takes FROM TO pairs")
@@ -66,6 +69,18 @@ def plan_from_args(args: argparse.Namespace, ws: workspace.Workspace) -> Plan:
     if not args.find:
         return plan(design, ws)
     return plan(design, ws, find_loose(ws))
+
+
+def plan_build(path: str, ws: workspace.Workspace) -> Plan:
+    """Plan a build file; each block says where it is picked up with `from = "f1"`."""
+    from robotic_experiments.blocks import structure
+
+    placed, raw = structure.load(path, ws.square_size_mm)
+    missing = [str(i) for i, b in enumerate(raw) if "from" not in b]
+    if missing:
+        raise ValueError(f"blocks {', '.join(missing)} have no `from`: say which square each block is picked up from")
+    pickups = [(b["from"], structure.parse_at(b["from"])) for b in raw]
+    return plan_structure(ws, placed, pickups)
 
 
 def find_loose(ws: workspace.Workspace) -> list[Loose]:
@@ -86,6 +101,16 @@ def describe(p: Plan, ws: workspace.Workspace) -> str:
     lines = []
     if not ws.calibrated:
         lines += ["!! Workspace is NOT marked calibrated: only a high --hover can run live.", ""]
+    if p.structure is not None:
+        from robotic_experiments.blocks.structure import top_view
+
+        lines += ["Structure (tallest level per square, from white's side):", top_view(list(p.structure)), ""]
+        lines.append(f"  {'#':>2} {'shape':8s} {'at':8s} {'along':6s} {'level':>5} {'base':>5} {'top':>5}  rests on")
+        for b in p.structure:
+            on = ", ".join(p.structure[s].at for s in b.supports) or "mat"
+            lines.append(f"  {b.index:2d} {b.shape.name:8s} {b.at:8s} {b.along if not b.shape.round else '-':6s} "
+                         f"{b.level:5d} {b.base_mm:5.0f} {b.top_mm:5.0f}  {on}")
+        lines.append("")
     if p.design is not None:
         lines += ["Design:", p.design.render(), ""]
         lines.append(f"Blocks: {len(p.assignments)}   (pickup spots available: {len(ws.pickups)})")

@@ -94,7 +94,11 @@ def parked_open(holding, ws) -> bool:
     well away from open_position.
     """
     pos = (holding.meta or {}).get("position")
-    return ws.open_position is not None and pos is not None and abs(pos - ws.open_position) <= 2 * GRIPPER_POSITION_TOLERANCE + 5
+    if pos is None:
+        return False
+    # release openings in use: the workspace default, and one per block size gripped (30 / 60 mm)
+    parked = [p for p in (ws.open_position, ws.release_position(30.0), ws.release_position(60.0)) if p is not None]
+    return any(abs(pos - p) <= 2 * GRIPPER_POSITION_TOLERANCE + 5 for p in parked)
 
 
 async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: float, grip_timeout: float) -> None:
@@ -124,7 +128,9 @@ async def run_step(machine, ws, s: Step, prev: Target | None, move_timeout: floa
     elif s.kind == "open":  # before a pickup: fully open, so an off-center block still fits
         await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
     elif s.kind == "release":
-        if ws.open_position is None:
+        if s.position is not None:
+            await bounded(open_partly(gripper, s.position), grip_timeout + 5, s.label)
+        elif ws.open_position is None:
             await bounded(gripper.open(timeout=grip_timeout), grip_timeout + 5, s.label)
         else:
             await bounded(open_partly(gripper, ws.open_position), grip_timeout + 5, s.label)

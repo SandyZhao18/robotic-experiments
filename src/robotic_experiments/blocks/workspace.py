@@ -67,6 +67,11 @@ class Workspace:
     open_position: float | None
     full_open_span_mm: float  # outer width of the fully open fingers (used around pickups)
     finger_width_mm: float  # width of the finger assembly across the opening direction
+    finger_thickness_mm: float  # each finger, along the opening direction
+    finger_depth_mm: float  # fingertip to the palm between the fingers (taller blocks are gripped higher)
+    gap_mm_per_unit: float  # inner finger gap ~= gap_mm_per_unit * position + gap_mm_at_zero
+    gap_mm_at_zero: float
+    release_side_clearance_mm: float  # gap left on each side of a block when releasing it
 
     grip_z: float  # gripper-frame z when the fingers are around a block on the mat
     approach_height_mm: float  # above grip_z, for approach and retreat
@@ -109,6 +114,36 @@ class Workspace:
             return (f"{label} is {d_open:.0f} mm away along the finger opening (need {need_open:.0f}) "
                     f"and {d_across:.0f} mm across it (need {need_across:.0f})")
         return None
+
+    def release_position(self, held_mm: float) -> float:
+        """Gripper position that opens just wide enough to let go of a block held across held_mm."""
+        gap = held_mm + 2 * self.release_side_clearance_mm
+        return (gap - self.gap_mm_at_zero) / self.gap_mm_per_unit
+
+    def release_gap_mm(self, held_mm: float) -> float:
+        return held_mm + 2 * self.release_side_clearance_mm
+
+    def grip_lift_mm(self, height_mm: float) -> float:
+        """How much higher than usual to grip a block so its top stays below the palm."""
+        return max(0.0, height_mm - self.finger_depth_mm)
+
+    @property
+    def tcp_above_fingertips_mm(self) -> float:
+        """Gripper frame above the fingertips (grip_z puts the fingertips 5 mm above the mat)."""
+        return self.grip_z - (self.mat_top_z + 5.0)
+
+    def finger_rects(self, f: float, r: float, gap_mm: float, margin: float = 0.0) -> list:
+        """The two fingers' footprints (mat mm, u along files, v along ranks) when open to gap_mm
+        around mat position (f, r), each grown by margin."""
+        from robotic_experiments.blocks.structure import Rect  # avoid an import cycle
+
+        u, v = self.uv_at(f, r)
+        g, t, w = gap_mm / 2, self.finger_thickness_mm, self.finger_width_mm / 2
+        if self.fingers_open_along_ranks:
+            rects = [Rect(u - w, v + g, u + w, v + g + t), Rect(u - w, v - g - t, u + w, v - g)]
+        else:
+            rects = [Rect(u + g, v - w, u + g + t, v + w), Rect(u - g - t, v - w, u - g, v + w)]
+        return [Rect(x.u0 - margin, x.v0 - margin, x.u1 + margin, x.v1 + margin) for x in rects]
 
     @property
     def mat_top_z(self) -> float:
@@ -269,6 +304,11 @@ def load(path: str | Path) -> Workspace:
         open_position=float(grip["open_position"]) if "open_position" in grip else None,
         full_open_span_mm=float(grip.get("full_open_span_mm", grip["open_finger_span_mm"])),
         finger_width_mm=float(grip.get("finger_width_mm", 45.0)),
+        finger_thickness_mm=float(grip.get("finger_thickness_mm", 11.0)),
+        finger_depth_mm=float(grip.get("finger_depth_mm", 45.0)),
+        gap_mm_per_unit=float(grip.get("gap_mm_per_unit", 0.1)),
+        gap_mm_at_zero=float(grip.get("gap_mm_at_zero", 8.0)),
+        release_side_clearance_mm=float(grip.get("release_side_clearance_mm", 7.0)),
         grip_z=float(grip["grip_z"]),
         approach_height_mm=float(grip["approach_height_mm"]),
         place_release_offset_mm=float(grip["place_release_offset_mm"]),
