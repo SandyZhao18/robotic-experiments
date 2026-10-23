@@ -1,0 +1,21 @@
+# An arch: two green cylinders as pillars, a blue brick across them, a cube on top of the middle.
+#            [cube]          level 3, top 120 mm
+#     [=====brick=====]      level 2, across the a3|b3 seam, top 90 mm
+#     (cyl)       (cyl)      level 1, 60 mm tall on a3 and b3
+[[block]]
+shape = "cylinder"
+at = "a3"
+
+[[block]]
+shape = "cylinder"
+at = "b3"
+
+[[block]]
+shape = "brick"
+at = "a3|b3"
+along = "files"
+level = 2
+
+[[block]]
+at = "a3|b3"
+level = 3

@@ -63,7 +63,7 @@ open_finger_span_mm = 66.0       # outer width across the fingers at open_positi
 full_open_span_mm = 113.0        # pickups open fully: tolerates ~30 mm of block offset
 finger_width_mm = 45.0           # across the opening direction; from the gripper's claw geometry (measure)
 finger_thickness_mm = 11.0       # each finger along the opening: (113 - 92) / 2 and (70 - 48) / 2
-finger_depth_mm = 45.0           # fingertip to palm between the fingers: PLACEHOLDER, measure (cylinders are 60 tall)
+finger_depth_mm = 40.0           # fingertip to palm between the fingers (measured ~40); 60 mm cylinders are gripped 20 mm higher
 gap_mm_per_unit = 0.1            # inner gap ~= 0.1 * position + 8 (measured at 399 and 840)
 gap_mm_at_zero = 8.0
 release_side_clearance_mm = 7.0  # release opening = held size + 2 x this (30 mm cube -> 44 mm, position 360)
