@@ -2,26 +2,26 @@
 # z values are for the GRIPPER FRAME (what `uv run record-pose` prints), not the block.
 #
 # PLACEHOLDER VALUES - nothing below has been measured yet. The executor refuses
-# to move while `calibrated = false`. Measure every value with record-pose, then flip it.
+# to move while `calibrated = false`. Measure every value, then flip it.
 calibrated = false
 frame = "world"
 
+[mat]
+# 8x8 chess mat, squares named from white's side: files a..h left to right, ranks 1..8 bottom to top.
+# Record each with a block held centered in that square: `uv run record-pose mat_a1` etc.
+a1 = [300.0,  200.0]
+h1 = [300.0, -199.0]
+a8 = [699.0,  200.0]
+square_size_mm = 57.0            # measured with a ruler; cross-checks the corners above
+
 [grid]
-# Centers of three corner cells, as the design is displayed (row 0 = top row).
-# Pick which physical side is "top" once, mark it on the table, and keep it.
-top_left    = [580.0,  90.0]
-top_right   = [580.0, -90.0]
-bottom_left = [400.0,  90.0]
+# 3x3 build area. The design displays exactly as the board looks from white's side.
+top_left = "c7"                  # square under design cell (row 0, col 0)
+stride = 2                       # 2 = every other square, leaves room for the open fingers
 
 [pickups]
-# One block per spot, used in this order. Need at least as many as the design has blocks.
-spots = [
-  [290.0,  180.0],
-  [290.0,   90.0],
-  [290.0,    0.0],
-  [290.0,  -90.0],
-  [290.0, -180.0],
-]
+# One block per square, used in this order. Must be outside the build grid and well spaced.
+squares = ["a1", "c1", "e1", "g1", "a3"]
 
 [block]
 size_mm = 40.0
@@ -29,18 +29,18 @@ size_mm = 40.0
 [gripper]
 open_finger_span_mm = 100.0      # outer width across the open fingers
 finger_clearance_mm = 10.0       # extra margin beside neighbouring blocks
-grip_z = 0.0                     # gripper-frame z with fingers around a block on the table
+grip_z = 0.0                     # gripper-frame z with fingers around a block on the mat
 approach_height_mm = 60.0        # above grip_z
-place_release_offset_mm = 2.0    # above grip_z when letting go on the table
+place_release_offset_mm = 2.0    # above grip_z when letting go on the mat
 travel_z = 200.0
 theta_deg = 0.0                  # finger alignment about the downward tool axis
 
 [safe_start]
-xyz = [300.0, 0.0, 300.0]
+xyz = [350.0, 0.0, 300.0]
 
 [limits]
 # Every target must fall inside this box. Table top is at z = -38 in world.
-min_xyz = [150.0, -350.0, -30.0]
-max_xyz = [750.0,  350.0, 600.0]
+min_xyz = [250.0, -250.0, -30.0]
+max_xyz = [750.0,  250.0, 600.0]
 required_obstacles = ["table", "wall-front", "wall-side", "ceiling"]
 arrival_tolerance_mm = 5.0

@@ -33,8 +33,8 @@ def describe(p: Plan, ws: workspace.Workspace) -> str:
     lines.append(f"Blocks: {len(p.assignments)}   (pickup spots available: {len(ws.pickups)})")
     for a in p.assignments:
         lines.append(
-            f"  block {a.block}: pickup {a.pickup_index} ({a.pickup_xy[0]:.1f}, {a.pickup_xy[1]:.1f})"
-            f"  ->  cell (row {a.cell[0]}, col {a.cell[1]}) ({a.cell_xy[0]:.1f}, {a.cell_xy[1]:.1f})"
+            f"  block {a.block}: pickup {a.pickup_square} ({a.pickup_xy[0]:.1f}, {a.pickup_xy[1]:.1f})"
+            f"  ->  {a.cell_square} = cell (row {a.cell[0]}, col {a.cell[1]}) ({a.cell_xy[0]:.1f}, {a.cell_xy[1]:.1f})"
         )
     lines += ["", f"Steps (gripper-frame targets in '{ws.frame}', mm):"]
     for i, s in enumerate(p.steps):

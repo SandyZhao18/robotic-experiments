@@ -1,8 +1,13 @@
 """Measured workspace, loaded from TOML. All positions are in the `world` frame, in mm.
 
+The table carries an 8x8 chess mat. Squares use chess names seen from white's side:
+files a..h run left to right, ranks 1..8 run bottom to top. Three recorded square
+centers (a1, h1, a8) locate every square. The 3x3 build grid and the pickup spots
+are both just squares on the mat.
+
 Every z value refers to the *gripper frame* (the point record-pose reports and
 motion.move targets), not the block. grip_z is measured by closing the gripper
-on a block sitting on the table and recording the pose.
+on a block sitting on the mat and recording the pose.
 """
 
 import math
@@ -12,26 +17,43 @@ from pathlib import Path
 
 Vec2 = tuple[float, float]
 
+MAT_SIZE = 8
+FILES = "abcdefgh"
+
+
+def parse_square(name: str) -> tuple[int, int]:
+    """'c6' -> (file index 2, rank index 5)."""
+    if len(name) != 2 or name[0] not in FILES or name[1] not in "12345678":
+        raise ValueError(f"bad square name {name!r}; expected a1..h8")
+    return FILES.index(name[0]), int(name[1]) - 1
+
+
+def square_name(f: int, r: int) -> str:
+    return f"{FILES[f]}{r + 1}"
+
 
 @dataclass(frozen=True)
 class Workspace:
     calibrated: bool
     frame: str
 
-    # Grid: centers of three corner cells as the design is displayed.
-    top_left: Vec2
-    top_right: Vec2
-    bottom_left: Vec2
+    # Recorded centers of three corner squares.
+    a1: Vec2
+    h1: Vec2
+    a8: Vec2
+    square_size_mm: float  # measured with a ruler; cross-checks the recorded corners
 
-    pickups: tuple[Vec2, ...]  # used in this order
+    grid_top_left: str  # square under design cell (row 0, col 0)
+    grid_stride: int  # squares between neighbouring design cells
+    pickup_squares: tuple[str, ...]  # used in this order
 
     block_size_mm: float
     open_finger_span_mm: float  # outer width of the open fingers
     finger_clearance_mm: float  # extra gap required beside neighbouring blocks
 
-    grip_z: float  # gripper-frame z when the fingers are around a block on the table
+    grip_z: float  # gripper-frame z when the fingers are around a block on the mat
     approach_height_mm: float  # above grip_z, for approach and retreat
-    place_release_offset_mm: float  # above grip_z when releasing on the table
+    place_release_offset_mm: float  # above grip_z when releasing on the mat
     travel_z: float
     theta_deg: float  # rotation about the downward tool axis that aligns the fingers
 
@@ -43,44 +65,67 @@ class Workspace:
     arrival_tolerance_mm: float
 
     @property
-    def col_step(self) -> Vec2:
-        return ((self.top_right[0] - self.top_left[0]) / 2, (self.top_right[1] - self.top_left[1]) / 2)
+    def file_step(self) -> Vec2:
+        return ((self.h1[0] - self.a1[0]) / 7, (self.h1[1] - self.a1[1]) / 7)
 
     @property
-    def row_step(self) -> Vec2:
-        return ((self.bottom_left[0] - self.top_left[0]) / 2, (self.bottom_left[1] - self.top_left[1]) / 2)
+    def rank_step(self) -> Vec2:
+        return ((self.a8[0] - self.a1[0]) / 7, (self.a8[1] - self.a1[1]) / 7)
+
+    def square_xy(self, name: str) -> Vec2:
+        f, r = parse_square(name)
+        fs, rs = self.file_step, self.rank_step
+        return (self.a1[0] + f * fs[0] + r * rs[0], self.a1[1] + f * fs[1] + r * rs[1])
+
+    def cell_square(self, row: int, col: int) -> str:
+        """Design rows go down the display, i.e. toward rank 1."""
+        f, r = parse_square(self.grid_top_left)
+        f, r = f + col * self.grid_stride, r - row * self.grid_stride
+        if not (0 <= f < MAT_SIZE and 0 <= r < MAT_SIZE):
+            raise ValueError(f"design cell ({row}, {col}) falls off the mat")
+        return square_name(f, r)
 
     def cell_xy(self, row: int, col: int) -> Vec2:
-        rs, cs = self.row_step, self.col_step
-        return (
-            self.top_left[0] + row * rs[0] + col * cs[0],
-            self.top_left[1] + row * rs[1] + col * cs[1],
-        )
+        return self.square_xy(self.cell_square(row, col))
+
+    @property
+    def pickups(self) -> tuple[Vec2, ...]:
+        return tuple(self.square_xy(s) for s in self.pickup_squares)
 
     def problems(self) -> list[str]:
         """Static checks on the measurements themselves (independent of any design)."""
         out = []
-        rp, cp = math.hypot(*self.row_step), math.hypot(*self.col_step)
-        if rp == 0 or cp == 0:
-            return ["grid corners must be distinct"]
-        if abs(rp - cp) > 3:
-            out.append(f"row pitch {rp:.1f} mm and column pitch {cp:.1f} mm differ by more than 3 mm")
-        cos = (self.row_step[0] * self.col_step[0] + self.row_step[1] * self.col_step[1]) / (rp * cp)
-        if abs(cos) > math.sin(math.radians(3)):
-            out.append(f"grid rows and columns are {math.degrees(math.acos(cos)):.1f}° apart, expected 90°")
+        fp, rp = math.hypot(*self.file_step), math.hypot(*self.rank_step)
+        if fp == 0 or rp == 0:
+            return ["a1, h1 and a8 must be distinct"]
+        for label, p in (("a1→h1", fp), ("a1→a8", rp)):
+            if abs(p - self.square_size_mm) > 2:
+                out.append(f"{label} gives {p:.1f} mm squares but square_size_mm is {self.square_size_mm} — recheck the recorded corners")
+        cos = (self.file_step[0] * self.rank_step[0] + self.file_step[1] * self.rank_step[1]) / (fp * rp)
+        if abs(cos) > math.sin(math.radians(2)):
+            out.append(f"files and ranks are {math.degrees(math.acos(cos)):.1f}° apart, expected 90° — are h1 and a8 swapped?")
+
+        try:
+            cells = {self.cell_square(r, c) for r in range(3) for c in range(3)}
+        except ValueError as e:
+            return out + [f"build grid from {self.grid_top_left} with stride {self.grid_stride}: {e}"]
+
         needed = (self.block_size_mm + self.open_finger_span_mm) / 2 + self.finger_clearance_mm
-        if min(rp, cp) < needed:
-            out.append(
-                f"cell pitch {min(rp, cp):.1f} mm is too tight: open fingers beside a placed block need {needed:.1f} mm"
-            )
-        cells = [self.cell_xy(r, c) for r in range(3) for c in range(3)]
-        for i, p in enumerate(self.pickups):
-            for j, q in enumerate(self.pickups[:i]):
+        pitch = min(fp, rp) * self.grid_stride
+        if pitch < needed:
+            out.append(f"build grid pitch {pitch:.1f} mm is too tight: open fingers beside a placed block need {needed:.1f} mm")
+
+        named = [(f"build square {s}", self.square_xy(s)) for s in sorted(cells)]
+        for i, s in enumerate(self.pickup_squares):
+            if s in cells:
+                out.append(f"pickup {i} ({s}) is inside the build grid")
+                continue
+            p = self.square_xy(s)
+            for label, q in named:
                 if math.dist(p, q) < needed:
-                    out.append(f"pickup {i} is {math.dist(p, q):.1f} mm from pickup {j}, need {needed:.1f} mm")
-            for k, q in enumerate(cells):
-                if math.dist(p, q) < needed:
-                    out.append(f"pickup {i} is {math.dist(p, q):.1f} mm from grid cell {divmod(k, 3)}, need {needed:.1f} mm")
+                    out.append(f"pickup {i} ({s}) is {math.dist(p, q):.1f} mm from {label}, need {needed:.1f} mm")
+            named.append((f"pickup {i} ({s})", p))
+
         if self.travel_z < self.grip_z + self.approach_height_mm:
             out.append("travel_z must be at or above grip_z + approach_height_mm")
         if self.approach_height_mm < self.block_size_mm:
@@ -91,14 +136,20 @@ class Workspace:
 def load(path: str | Path) -> Workspace:
     with open(path, "rb") as f:
         d = tomllib.load(f)
-    g, grip, lim = d["grid"], d["gripper"], d["limits"]
+    m, g, grip, lim = d["mat"], d["grid"], d["gripper"], d["limits"]
+    pickups = tuple(d["pickups"]["squares"])
+    for s in (g["top_left"], *pickups):
+        parse_square(s)
     return Workspace(
         calibrated=bool(d.get("calibrated", False)),
         frame=d.get("frame", "world"),
-        top_left=tuple(g["top_left"]),
-        top_right=tuple(g["top_right"]),
-        bottom_left=tuple(g["bottom_left"]),
-        pickups=tuple(tuple(p) for p in d["pickups"]["spots"]),
+        a1=tuple(m["a1"]),
+        h1=tuple(m["h1"]),
+        a8=tuple(m["a8"]),
+        square_size_mm=float(m["square_size_mm"]),
+        grid_top_left=g["top_left"],
+        grid_stride=int(g["stride"]),
+        pickup_squares=pickups,
         block_size_mm=float(d["block"]["size_mm"]),
         open_finger_span_mm=float(grip["open_finger_span_mm"]),
         finger_clearance_mm=float(grip["finger_clearance_mm"]),

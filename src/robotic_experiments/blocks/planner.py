@@ -31,8 +31,10 @@ class Step:
 class Assignment:
     block: int
     pickup_index: int
+    pickup_square: str
     pickup_xy: tuple[float, float]
     cell: tuple[int, int]
+    cell_square: str
     cell_xy: tuple[float, float]
 
 
@@ -49,6 +51,8 @@ class PlanError(ValueError):
 
 def plan(design: Design, ws: Workspace) -> Plan:
     problems = ws.problems()
+    if problems:
+        raise PlanError("; ".join(problems))
     filled = design.filled()
     if not filled:
         problems.append("design has no filled cells")
@@ -58,7 +62,8 @@ def plan(design: Design, ws: Workspace) -> Plan:
         raise PlanError("; ".join(problems))
 
     assignments = tuple(
-        Assignment(i, i, ws.pickups[i], cell, ws.cell_xy(*cell)) for i, cell in enumerate(filled)
+        Assignment(i, i, ws.pickup_squares[i], ws.pickups[i], cell, ws.cell_square(*cell), ws.cell_xy(*cell))
+        for i, cell in enumerate(filled)
     )
 
     def at(xy, z):
@@ -71,8 +76,8 @@ def plan(design: Design, ws: Workspace) -> Plan:
     steps = [Step("move", "move to safe start", target=Target(*ws.safe_start, ws.theta_deg))]
     for a in assignments:
         b = a.block
-        src = f"pickup {a.pickup_index}"
-        dst = f"cell (row {a.cell[0]}, col {a.cell[1]})"
+        src = f"pickup {a.pickup_square}"
+        dst = f"{a.cell_square} (cell {a.cell[0]},{a.cell[1]})"
         steps += [
             Step("move", f"travel above {src}", b, at(a.pickup_xy, ws.travel_z)),
             Step("move", f"approach {src}", b, at(a.pickup_xy, above)),

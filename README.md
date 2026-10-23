@@ -27,16 +27,21 @@ only `executor.py` talks to hardware.
 
 **Design convention:** row 0 is the top row as displayed, column 0 the left column. Patterns are
 given as `--preset one|line|L|cross` or `--grid "#..|#..|###"` (`■`/`□` also work). Blocks are
-filled row by row and take pickup spots in listed order.
+filled row by row and take pickup squares in listed order.
+
+**Chess mat:** the table carries an 8×8 chess mat. Squares are named from white's side (files a–h
+left to right, ranks 1–8 bottom to top), and the design displays exactly as the board looks from
+there. The 3×3 build grid (`[grid]`: top-left square + stride) and the pickup spots
+(`[pickups]`) are squares on the mat, so three recorded corners locate everything.
 
 **Calibration** (`config/workspace.toml`, all in `world`, mm, values are the gripper frame):
-1. Mark the 3×3 grid and the pickup spots on the table; decide which side is the displayed "top".
-2. Put the arm in manual mode, tool pointing straight down, fingers aligned with the grid.
-3. With the gripper closed around a block at each spot, run `uv run record-pose <name>` for:
-   the top-left, top-right and bottom-left grid cells, and every pickup spot.
-   The z of those readings is `grip_z`; the theta is `theta_deg`.
-4. Measure `size_mm` and the open finger span. Choose `travel_z`, `safe_start` and `limits`.
-5. `uv run blocks-dry-run --preset one` must pass with no warnings; then set `calibrated = true`.
+1. Tape the mat down — it must not move after calibration. Note which corner is a1.
+2. Measure one square edge (`square_size_mm`) and the block (`size_mm`).
+3. For each of a1, h1, a8: put a block centered on the square, guide the gripper over it in
+   manual mode (tool straight down, fingers parallel to the mat lines), close the fingers, exit
+   manual mode, then `uv run record-pose mat_a1` (`mat_h1`, `mat_a8`).
+4. Copy the x/y values into `[mat]`; the z is `grip_z` and the theta is `theta_deg`.
+5. `uv run blocks-dry-run --preset one` must pass; then set `calibrated = true`.
 
 **Live runs:** `blocks-run` refuses uncalibrated workspaces and more than `--max-blocks` (default 1)
 blocks, checks the machine first, and needs a typed `yes`. Use `--stop-after N` to run only up to a
