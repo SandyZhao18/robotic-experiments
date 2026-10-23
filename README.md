@@ -122,6 +122,27 @@ uv run placement-report
 | **Adjacent L**, one cube per run (20–24) | all five placed, none nudged; 5–9 mm off, consistently +6.4 mm along ranks |
 | Offset refit for the taped finger (`--offset-only`) | predicted residuals within ±1.6 mm along ranks |
 | **Adjacent L in a single run**, pickups a1–e1 (25–29) | 72 steps, no stops; ranks −1.3 to +2.8 mm, worst 6.6 mm (files offset carried from hand placement) |
+| Camera-found twisted cube (31): red found −24° on f1, wrist turned to match | placed on c5 2.8 mm off, square within 3° |
+| **Adjacent L from camera-found cubes** (32–36), one run | 1.3–5.4 mm off center, mean ranks 0.0 mm |
+
+### Building from cubes the camera finds
+
+Scatter cubes in the **supply files f–h** (reachable: f1–f4, g1–g4, h1–h2), move the camera up and
+build:
+
+```sh
+uv run blocks-run --goto 314 -392 600 --approved       # the [find] pose: camera sees the whole board
+uv run find-cubes                                      # read-only: what the camera sees
+uv run blocks-dry-run --preset L --grid-top-left a5 --grid-stride 1 --find
+uv run blocks-run --preset L --grid-top-left a5 --grid-stride 1 --find --max-blocks 5 --approved
+```
+
+Cubes are located against the chessboard in the same photo (immune to the camera's mounting
+error), filtered to cube height and size (not mat squares or hands), and their twist is measured
+from the top face's edges (repeats within ~1.5°). Twisted cubes are grabbed with the wrist turned
+to match (turned at travel height) and placed square. The plan refuses cubes out of reach and
+cubes whose open fingers (at their turned angle) would touch a cube still waiting, and picks in an
+order that avoids that where possible. The run re-finds the cubes before moving: keep hands off.
 
 ### Known issues
 
