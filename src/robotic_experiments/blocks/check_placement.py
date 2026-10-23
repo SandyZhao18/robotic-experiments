@@ -1,13 +1,14 @@
 """Measure where the red block sits relative to a square's center. Read-only: never moves the robot.
 
-    uv run check-placement a3
+    uv run check-placement a3 --from a1
 
 The block and the chessboard corners are measured in the same camera frame, so errors in the
 camera's mounting offset cancel out: the result is the block's physical offset on the mat.
 Squares in view are identified by matching against the camera-measured mat in the workspace,
 so a1 does not need to be visible. Each result is appended to config/placement_log.jsonl
 together with the placement correction configured *now*, so run it right after a trial.
-An annotated photo of the square is saved to runs/placements/ for every check.
+An annotated photo of the square is saved to runs/placements/ for every check, named like
+trial-03_a1-to-a3_1.8mm_2026-10-23_1351.jpg.
 """
 
 import argparse
@@ -80,6 +81,20 @@ def measure(world_lattice: np.ndarray, block_xy, ws: workspace.Workspace, square
     )
 
 
+def trial_number(recheck: bool) -> int:
+    """Next trial number from the log; a recheck reuses the latest trial's number."""
+    trials = 0
+    if LOG_PATH.exists():
+        trials = sum(1 for line in LOG_PATH.read_text().splitlines() if line.strip() and not json.loads(line).get("recheck"))
+    return max(trials, 1) if recheck else trials + 1
+
+
+def photo_name(trial: int, recheck: bool, src: str | None, p: Placement, when: datetime) -> str:
+    move = f"{src}-to-{p.square}" if src else f"on-{p.square}"
+    tag = f"trial-{trial:02d}{'-recheck' if recheck else ''}"
+    return f"{tag}_{move}_{p.distance_mm:.1f}mm_{when:%Y-%m-%d_%H%M%S}.jpg"
+
+
 def annotate(c: Capture, ws: workspace.Workspace, p: Placement) -> tuple[np.ndarray, list[int]]:
     """Outline the target square, mark its center and the block, and print the offset.
 
@@ -128,6 +143,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("square", help="the square the block should be on, e.g. a3")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
+    parser.add_argument("--from", dest="src", metavar="SQUARE", help="where the block was picked up (for naming)")
     parser.add_argument("--recheck", action="store_true", help="re-measuring a block already logged (not a new trial)")
     args = parser.parse_args()
     ws = workspace.load(args.workspace)
@@ -139,17 +155,19 @@ def main() -> None:
 
     now = datetime.now()
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    photo_path = PHOTO_DIR / f"{now:%Y%m%d-%H%M%S}_{p.square}.jpg"
+    trial = trial_number(args.recheck)
+    photo_path = PHOTO_DIR / photo_name(trial, args.recheck, args.src, p, now)
     cv2.imwrite(str(photo_path), photo)
 
     with LOG_PATH.open("a") as f:
         record = {**asdict(p), "placement_offset_in_use": list(ws.placement_offset_mm),
+                  "trial": trial, "from": args.src,
                   "photo": str(photo_path), "crop_px": crop, "recheck": args.recheck,
                   "recorded_at": now.isoformat(timespec="seconds")}
         f.write(json.dumps(record) + "\n")
 
     of, orank = ws.placement_offset_mm
-    print(f"Block is {p.distance_mm:.1f} mm from the center of {p.square}:")
+    print(f"Trial {trial}{' (recheck)' if args.recheck else ''}: block is {p.distance_mm:.1f} mm from the center of {p.square}:")
     print(f"  {p.along_files_mm:+.1f} mm along files (+ = toward h)")
     print(f"  {p.along_ranks_mm:+.1f} mm along ranks (+ = toward rank 8)")
     print(f"  ({p.corners_used} corners; this view's mat is {p.view_shift_mm:.1f} mm from the configured one)")

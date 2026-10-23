@@ -5,7 +5,7 @@
 
 Left: every trial's offset plotted inside the target square (files to the right, ranks up, as
 seen from white's side), numbered by trial. Right: a crop of each trial's photo, same numbering.
-Writes runs/placements/report.jpg and prints a table with the spread.
+Writes runs/placements/report_<square>_trials-<first>-<last>.jpg and prints a table with the spread.
 """
 
 import argparse
@@ -18,7 +18,6 @@ import numpy as np
 
 from robotic_experiments.blocks.check_placement import LOG_PATH, PHOTO_DIR
 
-OUT = PHOTO_DIR / "report.jpg"
 PLOT = 520  # px, scatter plot size
 TILE = 260  # px, photo crop size
 COLS = 3
@@ -85,7 +84,8 @@ def tiles(recs: list[dict]) -> np.ndarray:
         else:
             label(tile, "no photo", (TILE // 2 - 45, TILE // 2), 0.6)
         cv2.rectangle(tile, (0, 0), (TILE - 1, TILE - 1), color(i + 1), 4)
-        label(tile, f"{i + 1}: {r['distance_mm']:.1f} mm", (8, 24), 0.6, 2)
+        move = f"{r['from']}->{r['square']}" if r.get("from") else r["square"]
+        label(tile, f"{i + 1}: {move} {r['distance_mm']:.1f} mm", (8, 24), 0.6, 2)
         sheet[y * TILE:(y + 1) * TILE, x * TILE:(x + 1) * TILE] = tile
     return sheet
 
@@ -99,11 +99,14 @@ def main() -> None:
     left, right = scatter(recs), tiles(recs)
     h = max(left.shape[0], right.shape[0])
     pad = lambda im: cv2.copyMakeBorder(im, 0, h - im.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(255, 255, 255))
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(OUT), np.hstack([pad(left), pad(right)]))
+    squares = "-".join(sorted({r["square"] for r in recs}))
+    out = PHOTO_DIR / f"report_{squares}_trials-{recs[0].get('trial', 1)}-{recs[-1].get('trial', len(recs))}.jpg"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out), np.hstack([pad(left), pad(right)]))
 
     print(f"{'#':>2}  {'square':6} {'files':>7} {'ranks':>7} {'dist':>6}  correction   when")
     for i, r in enumerate(recs, 1):
+        i = r.get("trial", i)
         corr = r.get("placement_offset_in_use", [0, 0])
         print(f"{i:>2}  {r['square']:6} {r['along_files_mm']:+7.1f} {r['along_ranks_mm']:+7.1f} {r['distance_mm']:6.1f}"
               f"  [{corr[0]:.1f}, {corr[1]:.1f}]  {r['recorded_at']}")
@@ -114,7 +117,7 @@ def main() -> None:
         d = np.array([r["distance_mm"] for r in current])
         print(f"\nWith the current correction ({len(current)} trials): mean offset files {f.mean():+.1f}, ranks {rk.mean():+.1f} mm; "
               f"spread (std) files {f.std(ddof=1):.1f}, ranks {rk.std(ddof=1):.1f} mm; worst {d.max():.1f} mm")
-    print(f"Wrote {OUT}")
+    print(f"Wrote {out}")
 
 
 if __name__ == "__main__":
