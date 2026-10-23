@@ -63,7 +63,7 @@ async def gripper_pose(machine, frame: str) -> Pose:
     return (await machine.transform_pose(PoseInFrame(reference_frame=GRIPPER, pose=Pose(o_z=1)), frame)).pose
 
 
-async def preflight(machine, ws: workspace.Workspace) -> None:
+async def preflight(machine, ws: workspace.Workspace, allow_held_block: bool = False) -> None:
     names = {(rn.subtype, rn.name) for rn in machine.resource_names}
     missing = [n for n in [("arm", ARM), ("gripper", GRIPPER), ("motion", MOTION)] if n not in names]
     missing += [("obstacle", o) for o in ws.required_obstacles if not any(name == o for _, name in names)]
@@ -79,7 +79,7 @@ async def preflight(machine, ws: workspace.Workspace) -> None:
     if await Arm.from_robot(machine, ARM).is_moving():
         raise Abort("arm is moving")
     holding = await Gripper.from_robot(machine, GRIPPER).is_holding_something()
-    if holding.is_holding_something and not parked_open(holding, ws):
+    if holding.is_holding_something and not parked_open(holding, ws) and not allow_held_block:
         raise Abort("gripper reports it is already holding something")
 
     p = await gripper_pose(machine, ws.frame)
@@ -165,10 +165,11 @@ async def emergency_stop(machine) -> None:
             print(f"  could not stop {name}: {e!r}")
 
 
-async def execute(p: Plan, ws, stop_after: int | None, move_timeout: float, grip_timeout: float, approved: bool) -> int:
+async def execute(p: Plan, ws, stop_after: int | None, move_timeout: float, grip_timeout: float, approved: bool,
+                  allow_held_block: bool = False) -> int:
     async with await connect() as machine:
         try:
-            await preflight(machine, ws)
+            await preflight(machine, ws, allow_held_block)
         except Abort as e:
             print(f"ABORT before moving: {e}")
             return 1
@@ -214,6 +215,8 @@ def main() -> None:
     parser.add_argument("--move-timeout", type=float, default=30.0, help="seconds per arm move (default: 30)")
     parser.add_argument("--grip-timeout", type=float, default=10.0, help="seconds per gripper action (default: 10)")
     parser.add_argument("--approved", action="store_true", help="skip the typed confirmation (a supervisor approved this run)")
+    parser.add_argument("--allow-held-block", action="store_true",
+                        help="recovery only (--goto/--open-gripper): allow moving while a block is held")
     args = parser.parse_args()
 
     try:
@@ -224,6 +227,8 @@ def main() -> None:
 
     print(describe(p, ws))
     print()
+    if args.allow_held_block and not (args.goto or args.open_gripper):
+        sys.exit("--allow-held-block is only for --goto and --open-gripper recoveries.")
     if args.open_gripper:
         pass  # fingers only; nothing near the mat moves
     elif args.hover or args.goto:
@@ -237,7 +242,8 @@ def main() -> None:
     if args.stop_after is not None and not 0 <= args.stop_after < len(p.steps):
         sys.exit(f"--stop-after must be between 0 and {len(p.steps) - 1}")
 
-    sys.exit(asyncio.run(execute(p, ws, args.stop_after, args.move_timeout, args.grip_timeout, args.approved)))
+    sys.exit(asyncio.run(execute(p, ws, args.stop_after, args.move_timeout, args.grip_timeout, args.approved,
+                                 args.allow_held_block)))
 
 
 if __name__ == "__main__":
