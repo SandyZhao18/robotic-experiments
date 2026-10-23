@@ -233,3 +233,14 @@ def test_pickup_order_avoids_neighbours_that_are_already_gone():
     # mutual conflict: neither order works
     with pytest.raises(PlanError, match="spread the blocks apart"):
         plan(Design.parse("...|...|##."), ws, [Loose("a", 6.0, 1.0), Loose("b", 6.0, 1.9)])
+
+
+def test_executor_registers_the_camera_api_before_connecting():
+    # The SDK only creates clients for component APIs imported before the connection is made; the
+    # scene check needs the camera inside the executor's connection.
+    import ast
+    import pathlib
+
+    tree = ast.parse(pathlib.Path("src/robotic_experiments/blocks/executor.py").read_text())
+    top = [n for n in tree.body if isinstance(n, ast.ImportFrom)]
+    assert any(n.module == "viam.components.camera" for n in top)

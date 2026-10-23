@@ -27,6 +27,7 @@ import sys
 from datetime import datetime
 
 from viam.components.arm import Arm
+from viam.components.camera import Camera  # noqa: F401 - registers the camera API before connecting
 from viam.components.gripper import Gripper
 from viam.proto.common import Pose, PoseInFrame
 from viam.proto.service.motion import Constraints, LinearConstraint
