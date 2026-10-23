@@ -41,10 +41,11 @@ The table carries an 8×8 chess mat. Squares are named from white's side (files 
 ranks 1–8 bottom to top), and a design displays exactly as the board looks from there.
 
 ```
- build grid (every other square)     pickups (used in this order)
- a7  c7  e7                          a1  c1  e1  g1  g3
- a5  c5  e5
- a3  c3  e3
+ build area: files a-d               supply area: files e-h
+ default 3x3 grid (adjacent):        fixed pickups (in order): e1 e3 e5 g1 g3
+ a5  b5  c5                          loose blocks for --find: anywhere reachable in e-h
+ a4  b4  c4                          (e1-e7, f1-f4, g1-g4, h1-h2)
+ a3  b3  c3
 ```
 
 All of this is in `config/workspace.toml`: `[grid]` (top-left square + stride), `[pickups]`, block
@@ -132,7 +133,7 @@ uv run placement-report
 
 ### Building from cubes the camera finds
 
-Scatter cubes in the **supply files f–h** (reachable: f1–f4, g1–g4, h1–h2), move the camera up and
+Scatter blocks in the **supply files e–h** (reachable: e1–e7, f1–f4, g1–g4, h1–h2), move the camera up and
 build:
 
 ```sh
