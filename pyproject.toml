@@ -22,6 +22,7 @@ locate-mat = "robotic_experiments.blocks.locate_mat:main"
 check-placement = "robotic_experiments.blocks.check_placement:main"
 placement-report = "robotic_experiments.blocks.placement_report:main"
 find-cubes = "robotic_experiments.blocks.find_cubes:main"
+check-scene = "robotic_experiments.blocks.check_scene:main"
 fit-correction = "robotic_experiments.blocks.fit_correction:main"
 
 [build-system]

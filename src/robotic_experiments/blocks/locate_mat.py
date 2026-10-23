@@ -335,6 +335,8 @@ class Capture:
 # so the camera's mounting offset cancels). This rejects block-colored things that are not cubes:
 # mat squares under warm light (height ~0) and hands or arms reaching in (far higher).
 CUBE_HEIGHT_RANGE_MM = (18.0, 45.0)
+# Tops anywhere in a structure of up to ~5 cube heights (3 cubes plus a cylinder is 150 mm).
+STRUCTURE_HEIGHT_RANGE_MM = (18.0, 165.0)
 
 
 @dataclass
@@ -400,11 +402,13 @@ async def capture_frame(machine, colors=None) -> Frame:
     return Frame(bgr, corners, lattice, blocks)
 
 
-async def capture(machine, color: str = "red", near: tuple[float, float] | None = None) -> Capture:
+async def capture(machine, color: str = "red", near: tuple[float, float] | None = None,
+                  heights: tuple[float, float] = CUBE_HEIGHT_RANGE_MM) -> Capture:
     """Measure the mat and one block. color "any" accepts every known block color; with `near`
-    (world x, y) the block nearest that point is chosen, otherwise the largest blob."""
+    (world x, y) the block nearest that point is chosen, otherwise the largest blob. Only tops
+    within `heights` above the mat count (not mat squares, hands, ...)."""
     f = await capture_frame(machine, None if color == "any" else [color])
-    f.blocks = [b for b in f.blocks if b.cube_height]  # not mat squares, hands, ...
+    f.blocks = [b for b in f.blocks if heights[0] <= b.height_mm <= heights[1]]
     if not f.blocks:
         raise LocateError(f"no {'' if color == 'any' else color + ' '}block found in view")
     if near is None:

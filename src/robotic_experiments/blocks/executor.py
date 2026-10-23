@@ -21,8 +21,10 @@ Safety rules:
 
 import argparse
 import asyncio
+import dataclasses
 import math
 import sys
+from datetime import datetime
 
 from viam.components.arm import Arm
 from viam.components.gripper import Gripper
@@ -30,7 +32,7 @@ from viam.proto.common import Pose, PoseInFrame
 from viam.proto.service.motion import Constraints, LinearConstraint
 from viam.services.motion import MotionClient
 
-from robotic_experiments.blocks import workspace
+from robotic_experiments.blocks import scene, workspace
 from robotic_experiments.blocks.dry_run import add_design_args, describe, plan_from_args
 from robotic_experiments.blocks.planner import Plan, PlanError, Step, Target
 from robotic_experiments.connection import connect
@@ -200,6 +202,8 @@ async def execute(p: Plan, ws, stop_after: int | None, move_timeout: float, grip
             for i, s in enumerate(p.steps[: last + 1]):
                 print(f"  {i:3d} {s.kind:7s} {s.label}", flush=True)
                 await run_step(machine, ws, s, prev, move_timeout, grip_timeout)
+                if s.record is not None:  # the block is confirmed let go: it is now part of the scene
+                    scene.add(dataclasses.replace(s.record, placed_at=datetime.now().isoformat(timespec="seconds")))
                 prev = s.target or prev
         except (Abort, Exception, asyncio.CancelledError, KeyboardInterrupt) as e:
             reason = "interrupted" if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt)) else str(e) or repr(e)

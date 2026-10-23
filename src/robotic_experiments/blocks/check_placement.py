@@ -25,7 +25,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from robotic_experiments.blocks import workspace
+from robotic_experiments.blocks import structure, workspace
 from robotic_experiments.blocks.locate_mat import BLOCK_COLORS, Capture, LocateError, capture
 from robotic_experiments.connection import connect
 
@@ -77,7 +77,7 @@ def measure(world_lattice: np.ndarray, block_xy, ws: workspace.Workspace, square
     uv = mat_coords(world_lattice, ws)
     a1_view, fs, rs = fit_view(world_lattice, ws)
 
-    f, r = workspace.parse_square(square)
+    f, r = structure.parse_at(square)
     center = a1_view + f * fs + r * rs
     fu, ru = fs / np.linalg.norm(fs), rs / np.linalg.norm(rs)
     along_f, along_r = np.linalg.solve(np.column_stack([fu, ru]), np.asarray(block_xy) - center)
@@ -135,7 +135,7 @@ def annotate(c: Capture, ws: workspace.Workspace, p: Placement) -> tuple[np.ndar
         x, y, w = H @ np.array([u, v, 1.0])
         return int(round(x / w)), int(round(y / w))
 
-    f, r = workspace.parse_square(p.square)
+    f, r = structure.parse_at(p.square)
     out = c.bgr.copy()
     outline = np.array([to_px(f + du, r + dv) for du, dv in ((-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5))])
     cv2.polylines(out, [outline], True, (0, 255, 0), 2)
@@ -158,9 +158,15 @@ def annotate(c: Capture, ws: workspace.Workspace, p: Placement) -> tuple[np.ndar
     return out, [int(x0), int(y0), int(x1), int(y1)]
 
 
-async def run(ws: workspace.Workspace, square: str, color: str) -> tuple[Placement, str, np.ndarray, list[int]]:
+TOP_TOLERANCE_MM = 12.0  # a block's measured top may differ this much from the expected height
+
+
+async def run(ws: workspace.Workspace, square: str, color: str,
+              top_mm: float | None = None) -> tuple[Placement, str, np.ndarray, list[int]]:
+    top = ws.block_size_mm if top_mm is None else top_mm
     async with await connect() as machine:
-        c = await capture(machine, color, near=ws.measured_square_xy(square))
+        c = await capture(machine, color, near=ws.measured_xy_at(*structure.parse_at(square)),
+                          heights=(top - TOP_TOLERANCE_MM, top + TOP_TOLERANCE_MM))
     p = measure(c.world_lattice, c.block_world[:2], ws, square)
     return p, c.block_color, *annotate(c, ws, p)
 
@@ -169,6 +175,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("square", help="the square the block should be on, e.g. a3")
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="workspace TOML (default: %(default)s)")
+    parser.add_argument("--top-mm", type=float, help="expected height of the block's top above the mat "
+                        "(default: one block; e.g. 60 for the second cube of a stack)")
     parser.add_argument("--from", dest="src", metavar="SQUARE", help="where the block was picked up (for naming)")
     parser.add_argument("--color", choices=["any", *sorted(BLOCK_COLORS)], default="any",
                         help="only consider blocks of this color (default: any)")
@@ -178,8 +186,8 @@ def main() -> None:
     args = parser.parse_args()
     ws = workspace.load(args.workspace)
     try:
-        workspace.parse_square(args.square)
-        p, color, photo, crop = asyncio.run(run(ws, args.square, args.color))
+        structure.parse_at(args.square)
+        p, color, photo, crop = asyncio.run(run(ws, args.square, args.color, args.top_mm))
     except (LocateError, ValueError) as e:
         raise SystemExit(f"Could not check placement: {e}")
 

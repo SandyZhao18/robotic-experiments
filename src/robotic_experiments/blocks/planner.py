@@ -27,6 +27,7 @@ class Step:
     block: int | None = None  # index of the block this step belongs to
     target: Target | None = None
     position: float | None = None  # gripper position for "release" (None: the workspace default)
+    record: object | None = None  # scene.SceneBlock to record once this step succeeds
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class Assignment:
     release_position: float | None = None  # gripper position to let go (None: the workspace default)
     travel_z: float | None = None  # travel height while carrying (None: the workspace default)
     shape: str = "cube"
+    record: object | None = None  # scene.SceneBlock to record once the block is confirmed let go
 
 
 @dataclass(frozen=True)
@@ -185,6 +187,7 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
     """Build a solved structure (structure.solve) block by block, block i coming from pickups[i]
     (label, mat coordinates). Placed blocks and blocks still waiting are obstacles for the fingers
     at every pickup and drop; travel height rises to clear the tallest of them."""
+    from robotic_experiments.blocks import scene
     from robotic_experiments.blocks.structure import Rect, held_mm  # pure; avoids an import cycle
 
     problems = ws.mat_problems()
@@ -229,7 +232,7 @@ def plan_structure(ws: Workspace, placed: list, pickups: list[tuple[str, tuple[f
         assignments.append(Assignment(
             i, i, label, ws.xy_at(pf, pr), None, p.at, ws.xy_at(p.f, p.r),
             place_base_mm=p.base_mm, grip_lift_mm=lift, release_position=ws.release_position(held),
-            travel_z=travel, shape=p.shape.name,
+            travel_z=travel, shape=p.shape.name, record=scene.from_placed(p),
         ))
     if problems:
         raise PlanError("; ".join(problems))
@@ -281,7 +284,7 @@ def _pick_and_place_steps(ws: Workspace, assignments) -> tuple[Step, ...]:
             Step("move", f"lower block onto {dst}", b, at(a.cell_xy, release_z)),
             Step("release", "open fingers to release", b, position=a.release_position),
             Step("move", "retreat upward", b, at(a.cell_xy, place_above)),
-            Step("check_released", "close fingers to confirm the block was let go", b),
+            Step("check_released", "close fingers to confirm the block was let go", b, record=a.record),
             Step("move", "retreat to travel height", b, at(a.cell_xy, travel)),
         ]
     steps.append(Step("move", "return to safe start", target=Target(*ws.safe_start, ws.theta_deg)))
